@@ -1,4 +1,6 @@
 """Verificación del bloque 4 de PEDIDO-NEVERA-0, sin código de aplicación.
+Actualizada en PEDIDO-NEVERA-2 al esquema versión 2 (miembros, atribución,
+fotos, regla de hojas de D3 en las dos consultas).
 
 1. Aplica db/esquema.sql y db/referencia.sql en una base SQLite TEMPORAL con
    PRAGMA foreign_keys = ON y la borra al terminar.
@@ -25,6 +27,11 @@ REFERENCIA = os.path.join(RAIZ, "db", "referencia.sql")
 OPENAPI = os.path.join(RAIZ, "api", "openapi.yaml")
 
 fallos = []
+# Lo que ya había en el repositorio antes de correr (la base viva del
+# servicio vive en data/, ignorada por git): el script solo responde de
+# lo que él mismo cree.
+ANTES_RAIZ = set(os.listdir(RAIZ))
+ANTES_DATA = set(os.listdir(os.path.join(RAIZ, "data"))) if os.path.isdir(os.path.join(RAIZ, "data")) else None
 
 
 def h(titulo):
@@ -71,12 +78,13 @@ print(f"- SQLite {sqlite3.sqlite_version} (módulo sqlite3 de Python {sys.versio
 cx.executescript(open(ESQUEMA, encoding="utf-8").read())
 cx.executescript(open(REFERENCIA, encoding="utf-8").read())
 ok(uno(cx, "PRAGMA foreign_keys") == 1, "PRAGMA foreign_keys = 1 en la conexión")
-ok(uno(cx, "PRAGMA user_version") == 1, "PRAGMA user_version = 1")
+ok(uno(cx, "PRAGMA user_version") == 2, "PRAGMA user_version = 2 (esquema ampliado en PEDIDO-NEVERA-2)")
 n = {t: uno(cx, "SELECT COUNT(*) FROM sqlite_master WHERE type = ?", t) for t in ("table", "view", "trigger", "index")}
 print(f"- objetos creados: {n['table']} tablas, {n['view']} vistas, {n['trigger']} triggers, {n['index']} índices (los índices incluyen los automáticos de UNIQUE/PK)")
 ok(uno(cx, "PRAGMA integrity_check") == "ok", "PRAGMA integrity_check = ok")
 ok(cx.execute("PRAGMA foreign_key_check").fetchall() == [], "PRAGMA foreign_key_check sin filas")
-ok(uno(cx, "SELECT COUNT(*) FROM producto") == 0, "ningún producto tras aplicar esquema + referencia (sin datos de ejemplo)")
+ok(uno(cx, "SELECT COUNT(*) FROM producto") == 0 and uno(cx, "SELECT COUNT(*) FROM miembro") == 0,
+   "ningún producto ni miembro tras aplicar esquema + referencia (sin datos de ejemplo)")
 print(f"- catálogo de referencia: {uno(cx, 'SELECT COUNT(*) FROM unidad')} unidades, {uno(cx, 'SELECT COUNT(*) FROM ubicacion')} ubicaciones")
 
 # ---------------------------------------------------------------------
@@ -229,6 +237,7 @@ LEFT JOIN (SELECT elemento_id, SUM(cantidad) AS salida
            FROM movimiento GROUP BY elemento_id) m ON m.elemento_id = e.id
 WHERE e.vencimiento BETWEEN date('now') AND date('now', '+' || :n || ' days')
   AND e.cantidad_inicial - COALESCE(m.salida, 0) > 0
+  AND NOT EXISTS (SELECT 1 FROM elemento h WHERE h.padre_id = e.id)   -- D3: solo hojas
 ORDER BY e.vencimiento, e.id
 """
 
@@ -247,6 +256,7 @@ disponible AS (
     JOIN presentacion pr ON pr.id = e.presentacion_id
     LEFT JOIN (SELECT elemento_id, SUM(cantidad) AS salida
                FROM movimiento GROUP BY elemento_id) m ON m.elemento_id = e.id
+    WHERE NOT EXISTS (SELECT 1 FROM elemento h WHERE h.padre_id = e.id)   -- D3: solo hojas
 )
 SELECT r.id                                   AS receta_id,
        r.nombre,
@@ -441,8 +451,10 @@ h("5. Limpieza")
 cx.close()
 os.unlink(ruta)
 ok(not os.path.exists(ruta), f"base temporal borrada: `{ruta}` ya no existe")
-ok(not any(f.endswith(".db") for f in os.listdir(RAIZ)) and not os.path.exists(os.path.join(RAIZ, "data")),
-   "ningún .db ni carpeta data/ quedó en el repositorio")
+nuevos_raiz = set(os.listdir(RAIZ)) - ANTES_RAIZ
+nuevos_data = (set(os.listdir(os.path.join(RAIZ, "data"))) - ANTES_DATA) if ANTES_DATA is not None else set()
+ok(not any(f.endswith(".db") for f in nuevos_raiz) and "data" not in nuevos_raiz and not nuevos_data,
+   "el script no dejó ningún .db ni carpeta data/ en el repositorio (la base viva de data/, si existe, no se toca)")
 
 print()
 print("**VERIFICACIÓN OK**" if not fallos else "**VERIFICACIÓN CON FALLOS:** " + "; ".join(fallos))

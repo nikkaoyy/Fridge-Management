@@ -1,5 +1,7 @@
 -- =====================================================================
--- Catálogo de nevera · esquema de referencia para SQLite (PEDIDO-NEVERA-0)
+-- Catálogo de nevera · esquema de referencia para SQLite
+-- (PEDIDO-NEVERA-0; ampliado en PEDIDO-NEVERA-2: miembros, atribución,
+-- fotos y la regla de hojas de D3 en v_elemento)
 -- ---------------------------------------------------------------------
 -- · Sin datos. Ni productos, ni precios, ni lotes. El catálogo de
 --   referencia (unidades, ubicaciones) va aparte en db/referencia.sql.
@@ -11,10 +13,17 @@
 -- · Dinero en COP como INTEGER (pesos enteros, sin centavos).
 -- · El modelo y su justificación están en docs/modelo-relacional.md.
 --   El DDL y el diagrama mermaid de ese documento dicen lo mismo.
+-- · Versión 2 (PRAGMA user_version). Se amplió este archivo en vez de
+--   añadir una migración porque no existía ninguna base desplegada con
+--   la versión 1; la aplicación se niega a abrir una base de otra versión.
+-- · Decisiones firmadas (docs/plan.md §2): D1 unidad física, D2 3D
+--   esquemática (nada en el esquema), D3 el pack se explota al registrar
+--   y el saldo se cuenta solo en hojas, D4 todo o nada en la interfaz,
+--   D5 fotos desde el alta (producto_foto).
 -- =====================================================================
 
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
 -- ---------------------------------------------------------------------
 -- Catálogo: unidad, categoría, ubicación, proveedor
@@ -129,6 +138,27 @@ CREATE INDEX ix_presentacion_producto ON presentacion (producto_id);
 CREATE INDEX ix_presentacion_parte    ON presentacion (parte_id);
 
 -- ---------------------------------------------------------------------
+-- Miembros del hogar (PEDIDO-NEVERA-2): quién ve, quién edita, quién hizo qué
+-- ---------------------------------------------------------------------
+
+-- Una persona o un dispositivo con acceso. Sin filas de ejemplo: el
+-- primer admin lo crea la aplicación desde NEVERA_ADMIN_TOKEN.
+--  · rol: lector (solo lee), editor (altas, movimientos, fotos),
+--    admin (además gestiona miembros y borra).
+--  · token_hash: 'sha256$<sal hex>$<sha256(sal || token) hex>', con sal
+--    propia por miembro. El token en claro no se guarda nunca.
+--  · activo: borrado lógico. Un miembro con historia no se borra: su
+--    nombre sigue respondiendo «quién se acabó la leche».
+CREATE TABLE miembro (
+    id         INTEGER PRIMARY KEY,
+    nombre     TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+    rol        TEXT    NOT NULL CHECK (rol IN ('admin', 'editor', 'lector')),
+    token_hash TEXT    NOT NULL UNIQUE CHECK (token_hash GLOB 'sha256$*$*'),
+    activo     INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1)),
+    creado_en  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+) STRICT;
+
+-- ---------------------------------------------------------------------
 -- Compra y elemento (la instancia en la nevera)
 -- ---------------------------------------------------------------------
 
@@ -139,10 +169,12 @@ CREATE TABLE compra (
     fecha        TEXT    NOT NULL CHECK (fecha GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
     proveedor_id INTEGER          REFERENCES proveedor (id) ON DELETE SET NULL,
     total_cop    INTEGER          CHECK (total_cop IS NULL OR total_cop >= 0),
-    nota         TEXT
+    nota         TEXT,
+    registrada_por INTEGER        REFERENCES miembro (id) ON DELETE RESTRICT -- quién la abrió; NULL solo fuera de la API
 ) STRICT;
 
 CREATE INDEX ix_compra_fecha ON compra (fecha);
+CREATE INDEX ix_compra_registrada_por ON compra (registrada_por);
 
 -- Qué presentación se compró en esa compra y a qué precio unitario. El
 -- precio pagado depende del par (compra, presentación), no del elemento:
@@ -163,6 +195,10 @@ CREATE TABLE compra_linea (
 --  · vencimiento NULL = no se sabe; vencimiento_origen dice de dónde salió.
 --  · padre_id: la bolsa que salió de este pack (empaque anidado).
 --  · etiqueta: cómo lo llama la casa para saber cuál es cuál («la de la puerta»).
+--  · D1: una fila por cosa física. D3: un pack entra como padre y sus
+--    partes como hijos (padre_id) en la misma alta; el saldo que cuenta
+--    es el de las hojas (v_elemento.es_hoja).
+--  · alta_por: el miembro que lo registró.
 CREATE TABLE elemento (
     id                 INTEGER PRIMARY KEY,
     compra_id          INTEGER NOT NULL,
@@ -176,6 +212,7 @@ CREATE TABLE elemento (
     padre_id           INTEGER          REFERENCES elemento (id) ON DELETE SET NULL,
     etiqueta           TEXT,
     nota               TEXT,
+    alta_por           INTEGER          REFERENCES miembro (id) ON DELETE RESTRICT, -- NULL solo fuera de la API
     creado_en          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (compra_id, presentacion_id) REFERENCES compra_linea (compra_id, presentacion_id) ON DELETE RESTRICT,
     CHECK ((vencimiento IS NULL) = (vencimiento_origen IS NULL)),
@@ -187,6 +224,7 @@ CREATE INDEX ix_elemento_presentacion ON elemento (presentacion_id);
 CREATE INDEX ix_elemento_compra       ON elemento (compra_id);
 CREATE INDEX ix_elemento_ubicacion    ON elemento (ubicacion_id);
 CREATE INDEX ix_elemento_padre        ON elemento (padre_id);
+CREATE INDEX ix_elemento_alta_por     ON elemento (alta_por);
 
 -- Libro de salidas del elemento: consumo, merma (se botó) o ajuste. En la
 -- unidad base del producto. El elemento no se actualiza al consumir.
@@ -197,11 +235,33 @@ CREATE TABLE movimiento (
     tipo        TEXT    NOT NULL CHECK (tipo IN ('consumo', 'merma', 'ajuste')),
     cantidad    REAL    NOT NULL CHECK (cantidad <> 0 AND (tipo = 'ajuste' OR cantidad > 0)), -- ajuste puede ser negativo (apareció más)
     motivo      TEXT,
+    miembro_id  INTEGER          REFERENCES miembro (id) ON DELETE RESTRICT, -- quién lo registró; NULL solo fuera de la API
     creado_en   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 ) STRICT;
 
 CREATE INDEX ix_movimiento_elemento ON movimiento (elemento_id);
 CREATE INDEX ix_movimiento_fecha    ON movimiento (fecha);
+CREATE INDEX ix_movimiento_miembro  ON movimiento (miembro_id);
+
+-- ---------------------------------------------------------------------
+-- Fotos del producto (D5): se guardan desde el alta, sin modelo de visión
+-- ---------------------------------------------------------------------
+
+-- Una foto tomada en el alta. El archivo vive en disco (directorio de
+-- datos de la aplicación); aquí va su ruta relativa a ese directorio.
+-- Es material para el reconocimiento de §3 del plan: se guarda el
+-- producto (lo que la foto muestra) y, si se sabe, el elemento con el
+-- que entró. Borrar el elemento (error de registro) no borra la foto.
+CREATE TABLE producto_foto (
+    id          INTEGER PRIMARY KEY,
+    producto_id INTEGER NOT NULL REFERENCES producto (id) ON DELETE RESTRICT,
+    ruta        TEXT    NOT NULL UNIQUE CHECK (ruta NOT LIKE '/%' AND ruta NOT LIKE '%..%'),
+    tomada_en   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    elemento_id INTEGER          REFERENCES elemento (id) ON DELETE SET NULL
+) STRICT;
+
+CREATE INDEX ix_producto_foto_producto ON producto_foto (producto_id);
+CREATE INDEX ix_producto_foto_elemento ON producto_foto (elemento_id);
 
 -- ---------------------------------------------------------------------
 -- Precio por proveedor (fase 2). Ternaria no descomponible: 5FN.
@@ -335,6 +395,15 @@ BEGIN
        <> (SELECT producto_id FROM presentacion WHERE id = NEW.presentacion_id);
 END;
 
+-- La foto de un elemento es foto de su producto.
+CREATE TRIGGER tg_producto_foto_coherente_ins BEFORE INSERT ON producto_foto
+BEGIN
+    SELECT RAISE(ABORT, 'producto_foto.elemento_id debe ser un elemento del mismo producto')
+    WHERE NEW.elemento_id IS NOT NULL
+      AND (SELECT pr.producto_id FROM elemento e JOIN presentacion pr ON pr.id = e.presentacion_id WHERE e.id = NEW.elemento_id)
+       <> NEW.producto_id;
+END;
+
 -- ---------------------------------------------------------------------
 -- Vistas: lo derivado se calcula, no se guarda
 -- ---------------------------------------------------------------------
@@ -357,30 +426,95 @@ SELECT id, producto_id, nombre, contenido_base, nivel FROM arbol;
 
 -- El elemento con su saldo y su producto: lo que miran el dashboard, la
 -- vista 3D y el motor de recetas.
+--  · D3, el saldo se cuenta solo en hojas. es_hoja = 1 si nadie cuelga
+--    del elemento (NOT EXISTS hijo). El saldo de una hoja es
+--    cantidad_inicial − Σ movimiento; el de un pack es la suma del saldo de
+--    sus hojas: su propia cantidad_inicial no suma nunca. Para CONTAR o
+--    SUMAR lo que hay, filtrar es_hoja = 1 (si no, el pack cuenta doble).
+--  · vencimiento es el EFECTIVO (docs/modelo-relacional.md §4): en una
+--    hoja abierta con vida_util.dias_abierto, min(vencimiento,
+--    abierto_en + dias_abierto), y entonces vencimiento_origen =
+--    'estimado'. La columna elemento.vencimiento no se toca al abrir, así
+--    que «cerrar» (abierto_en = NULL) devuelve la fecha original. Abrir
+--    un pack no acorta la vida de sus bolsas cerradas.
+--  · «hoy» es date('now', 'localtime'): la aplicación corre con
+--    TZ=America/Bogota; con date('now') a secas, de 19:00 a 24:00 en
+--    Bogotá el día ya sería mañana (UTC).
 CREATE VIEW v_elemento AS
-SELECT e.id,
-       e.compra_id,
+WITH RECURSIVE
+salida (elemento_id, total) AS (
+    SELECT elemento_id, SUM(cantidad) FROM movimiento GROUP BY elemento_id
+),
+hoja (id, saldo) AS (
+    SELECT e.id, e.cantidad_inicial - COALESCE(s.total, 0)
+    FROM elemento e
+    LEFT JOIN salida s ON s.elemento_id = e.id
+    WHERE NOT EXISTS (SELECT 1 FROM elemento h WHERE h.padre_id = e.id)
+),
+-- cada hoja aporta su saldo a sí misma y a cada antepasado; la hoja va en
+-- la fila para que UNION no confunda dos hojas con el mismo saldo y para
+-- que un ciclo de padre_id (que la API no permite) no recurra sin fin.
+sube (hoja_id, elemento_id, saldo) AS (
+    SELECT id, id, saldo FROM hoja
+    UNION
+    SELECT s.hoja_id, e.padre_id, s.saldo
+    FROM sube s JOIN elemento e ON e.id = s.elemento_id
+    WHERE e.padre_id IS NOT NULL
+),
+saldo (elemento_id, saldo) AS (
+    SELECT elemento_id, SUM(saldo) FROM sube GROUP BY elemento_id
+),
+base AS (
+    SELECT e.*,
+           CASE WHEN EXISTS (SELECT 1 FROM elemento h WHERE h.padre_id = e.id) THEN 0 ELSE 1 END AS es_hoja,
+           pr.producto_id,
+           pr.nombre AS presentacion_nombre,
+           vu.dias_abierto
+    FROM elemento e
+    JOIN presentacion pr ON pr.id = e.presentacion_id
+    LEFT JOIN vida_util vu ON vu.producto_id = pr.producto_id
+),
+efectivo AS (
+    SELECT b.*,
+           CASE WHEN b.es_hoja = 1 AND b.abierto_en IS NOT NULL AND b.dias_abierto IS NOT NULL
+                 AND (b.vencimiento IS NULL OR date(b.abierto_en, '+' || b.dias_abierto || ' days') < b.vencimiento)
+                THEN 1 ELSE 0 END AS por_apertura
+    FROM base b
+)
+SELECT f.id,
+       f.compra_id,
        c.fecha                                   AS fecha_compra,
-       pr.producto_id,
+       f.producto_id,
        p.nombre                                  AS producto,
        p.categoria_id,
-       e.presentacion_id,
-       pr.nombre                                 AS presentacion,
-       e.ubicacion_id,
+       p.perecedero,
+       f.presentacion_id,
+       f.presentacion_nombre                     AS presentacion,
+       f.ubicacion_id,
        p.unidad_base_id,
-       e.cantidad_inicial,
-       e.cantidad_inicial - COALESCE(m.salida, 0) AS saldo,
-       e.vencimiento,
-       e.vencimiento_origen,
-       CASE WHEN e.vencimiento IS NULL THEN NULL
-            ELSE CAST(julianday(e.vencimiento) - julianday(date('now')) AS INTEGER) END AS dias_para_vencer,
-       e.madurez,
-       e.abierto_en,
-       e.padre_id,
-       e.etiqueta
-FROM elemento e
-JOIN presentacion pr ON pr.id = e.presentacion_id
-JOIN producto p      ON p.id  = pr.producto_id
-JOIN compra c        ON c.id  = e.compra_id
-LEFT JOIN (SELECT elemento_id, SUM(cantidad) AS salida FROM movimiento GROUP BY elemento_id) m
-       ON m.elemento_id = e.id;
+       u.codigo                                  AS unidad_base,
+       f.cantidad_inicial,
+       COALESCE(sd.saldo, 0)                     AS saldo,
+       f.es_hoja,
+       CASE WHEN f.por_apertura = 1 THEN date(f.abierto_en, '+' || f.dias_abierto || ' days')
+            ELSE f.vencimiento END               AS vencimiento,
+       CASE WHEN f.por_apertura = 1 THEN 'estimado'
+            ELSE f.vencimiento_origen END        AS vencimiento_origen,
+       CASE WHEN f.por_apertura = 1
+            THEN CAST(julianday(date(f.abierto_en, '+' || f.dias_abierto || ' days')) - julianday(date('now', 'localtime')) AS INTEGER)
+            WHEN f.vencimiento IS NULL THEN NULL
+            ELSE CAST(julianday(f.vencimiento) - julianday(date('now', 'localtime')) AS INTEGER) END AS dias_para_vencer,
+       f.madurez,
+       f.abierto_en,
+       f.padre_id,
+       f.etiqueta,
+       f.nota,
+       cl.precio_unitario_cop,
+       f.alta_por,
+       f.creado_en
+FROM efectivo f
+JOIN producto p      ON p.id  = f.producto_id
+JOIN unidad u        ON u.id  = p.unidad_base_id
+JOIN compra c        ON c.id  = f.compra_id
+JOIN compra_linea cl ON cl.compra_id = f.compra_id AND cl.presentacion_id = f.presentacion_id
+LEFT JOIN saldo sd   ON sd.elemento_id = f.id;

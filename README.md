@@ -1,0 +1,50 @@
+# Catálogo de nevera
+
+Backend del catálogo de la nevera de la casa: qué hay, qué vence, qué se botó y quién lo hizo. FastAPI + SQLite, sin
+ORM. El modelo está en `docs/modelo-relacional.md`, el DDL en `db/esquema.sql`, el contrato en `api/openapi.yaml` y el
+plan en `docs/plan.md`. Fase 1 del plan (`PEDIDO-NEVERA-2.md`).
+
+## Requisitos
+
+Python 3.12 o más nuevo (la máquina tiene 3.14). No hace falta el cliente `sqlite3`: todo va por el módulo de Python.
+
+```
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+`.venv/` y `data/` están en `.gitignore`: el repositorio nunca lleva una base ni una foto.
+
+## Crear la base
+
+No hace falta hacerlo a mano: el servicio crea `data/nevera.db` si no existe. Para crearla aparte (o en otra ruta):
+
+```
+.venv/bin/python -I scripts/crear_base.py                 # data/nevera.db
+.venv/bin/python -I scripts/crear_base.py /tmp/otra.db    # cualquier ruta
+```
+
+Aplica `db/esquema.sql` (20 tablas, 2 vistas, 8 triggers, `PRAGMA user_version = 2`) y `db/referencia.sql` (6 unidades
+y 6 ubicaciones; es catálogo de referencia, no datos de ejemplo). Nunca sobrescribe una base existente. La base queda
+con 0 productos y 0 miembros.
+
+**Esquema ampliado, no migrado.** NEVERA-2 añadió `miembro`, `producto_foto` y las columnas de atribución
+(`compra.registrada_por`, `elemento.alta_por`, `movimiento.miembro_id`) directamente en `db/esquema.sql` y subió la
+versión a 2, porque no existía ninguna base con la versión 1 que migrar. No hay carpeta `db/migraciones/`. El servicio
+se niega a abrir una base cuya versión no sea la 2 y lo dice. El primer cambio de esquema con una base viva sí irá como
+migración numerada.
+
+## Arrancar
+
+El servicio escucha en `0.0.0.0:8451` (8445-8450 son de otros servicios; 8450 es PYTHAGORAS).
+
+```
+NEVERA_ADMIN_TOKEN='…' TZ=America/Bogota .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8451
+```
+
+- **Primer arranque, sin miembros**: el servicio crea **un** miembro `admin` con el token de `NEVERA_ADMIN_TOKEN` (se
+  guarda solo su hash con sal). Si la variable falta, no arranca y lo dice. Los demás miembros de la familia se crean
+  con `POST /miembros`; el token de cada uno se devuelve una sola vez.
+- **Arranques siguientes**: `NEVERA_ADMIN_TOKEN` ya no se usa (si viene, se ignora y el log lo dice sin mostrarlo).
+- `TZ=America/Bogota`: «hoy» (vencimientos, compra del día) es el día de Bogotá, no el de UTC.
+- `NEVERA_DATOS`: directorio de datos (base, fotos). Por defecto `data/` dentro del repositorio.

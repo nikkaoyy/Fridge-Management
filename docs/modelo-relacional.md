@@ -1,7 +1,8 @@
 # Modelo relacional del Catálogo de nevera
 
-Entregable del bloque 1 de `PEDIDO-NEVERA-0.md`. El DDL que lo materializa está en `db/esquema.sql`; el catálogo de
-referencia (unidades, ubicaciones) en `db/referencia.sql`. Este documento y el DDL dicen lo mismo: si difieren, manda el
+Entregable del bloque 1 de `PEDIDO-NEVERA-0.md`, ampliado en el bloque 1 de `PEDIDO-NEVERA-2.md` (miembros,
+atribución, fotos y la regla de hojas de D3; esquema versión 2). El DDL que lo materializa está en `db/esquema.sql`; el
+catálogo de referencia (unidades, ubicaciones) en `db/referencia.sql`. Este documento y el DDL dicen lo mismo: si difieren, manda el
 DDL y es un error que hay que corregir aquí.
 
 Lo que el modelo tiene que aguantar está en el pedido, sección «El ruido». En una frase: **el catálogo distingue la
@@ -17,6 +18,7 @@ Tres capas, de lo estable a lo que cambia cada día:
 | Catálogo | `unidad`, `categoria`, `ubicacion`, `proveedor`, `producto`, `vida_util`, `vida_util_madurez`, `vida_util_conservacion`, `presentacion` | El tipo de cosa y cómo se compra. Cambia poco. Normalizado a 5FN sin excepciones. |
 | Hechos | `compra`, `compra_linea`, `elemento`, `movimiento` | Lo que entra, lo que hay y lo que sale. `elemento` es la tabla central de hechos: ahí vive el ruido. |
 | Precios y recetas | `precio`, `receta`, `receta_version`, `receta_ingrediente`, `plan_comida` | Fases 2 y 3 del contrato. Se modelan ahora porque la 4FN y la 5FN muerden aquí. |
+| Hogar y fotos (NEVERA-2) | `miembro`, `producto_foto` | Quién entra y con qué rol, y las fotos del alta (D5). `compra`, `elemento` y `movimiento` apuntan a `miembro` para saber quién hizo qué. |
 
 ### Tabla por tabla
 
@@ -53,7 +55,13 @@ convierte con el factor). `parte_id` + `partes` es el empaque anidado: «pack 12
 CHECK: contenido y unidad van juntos; parte y número de partes van juntos; una compuesta no declara contenido propio (se
 deriva, vista `v_presentacion_base`). Y una por trigger: la parte es del mismo producto.
 
-**`compra`** (`id`). Una ida al mercado: `fecha`, `proveedor_id` opcional, `total_cop` opcional. La fecha de compra vive
+**`miembro`** (`id`; `nombre` única sin distinguir mayúsculas). Una persona o dispositivo del hogar con `rol` (`admin`,
+`editor`, `lector`), `token_hash` (`sha256$<sal>$<hash>`, sal propia por miembro; el token en claro no se guarda) y
+`activo` (borrado lógico: un miembro con historia no se borra, porque su nombre es la respuesta a «quién se acabó la
+leche»). Ninguna fila de ejemplo: el primer admin lo crea la aplicación desde `NEVERA_ADMIN_TOKEN`.
+
+**`compra`** (`id`). Una ida al mercado: `fecha`, `proveedor_id` opcional, `total_cop` opcional, `registrada_por` (el
+miembro que la abrió). La fecha de compra vive
 aquí y no en cada elemento (3FN). El alta rápida crea o reutiliza la compra del día sin proveedor; el usuario no la ve si
 no quiere.
 
@@ -65,11 +73,17 @@ todas formas necesita.
 **`elemento`** (`id`). **La instancia.** Esta bolsa, este tomate. Lleva (`compra_id`, `presentacion_id`) → la línea de
 compra, `ubicacion_id`, `cantidad_inicial` en la unidad base del producto, `vencimiento` con `vencimiento_origen`
 (impreso, estimado, manual), `madurez` al comprar, `abierto_en`, `padre_id` (la bolsa que salió de este pack) y
-`etiqueta` (el nombre de casa: «la de la puerta»). No lleva saldo: se calcula.
+`etiqueta` (el nombre de casa: «la de la puerta») y `alta_por` (el miembro que lo registró). No lleva saldo: se
+calcula.
 
 **`movimiento`** (`id`). Libro de salidas de un elemento: `tipo` consumo, merma o ajuste, `cantidad` en la unidad base,
-`fecha`, `motivo`. Consumir no actualiza el elemento; añade una fila. El saldo es `cantidad_inicial − Σ movimiento`
+`fecha`, `motivo` y `miembro_id` (quién lo registró). Consumir no actualiza el elemento; añade una fila. El saldo es `cantidad_inicial − Σ movimiento`
 (vista `v_elemento`). Con esto «cuánto se botó este mes» es una suma, no una reconstrucción.
+
+**`producto_foto`** (`id`; `ruta` única). Una foto tomada en el alta (D5): `producto_id` (lo que la foto muestra),
+`ruta` relativa al directorio de datos, `tomada_en` y `elemento_id` opcional (con qué elemento entró; si el elemento se
+borra por error de registro, la foto se queda). Un trigger exige que el elemento sea del mismo producto. No hay modelo
+de visión todavía: es el material que §3 del plan necesita.
 
 **`precio`** (`presentacion_id`, `proveedor_id`, `vigente_desde`). Lo que cobra un proveedor por una presentación
 desde una fecha. `vigente_hasta` no se guarda: es el siguiente `vigente_desde`.
@@ -87,7 +101,11 @@ desde una fecha. `vigente_hasta` no se guarda: es el siguiente `vigente_desde`.
   `presentacion`.
 - **Estado del elemento** (disponible, agotado, desechado): derivado. Saldo 0 con último movimiento `merma` es
   desechado; saldo 0 con `consumo` es consumido; saldo > 0 es disponible.
-- **Posición física en la nevera**: no existe. Depende de la decisión D2.
+- **Posición física en la nevera**: no existe. D2 se firmó «esquemática»: la escena coloca por `ubicacion` y no se
+  añade nada al esquema.
+- **Saldo de un pack**: derivado de sus hojas (D3). El padre no suma su propia `cantidad_inicial`.
+- **Sal del token**: no es columna aparte; va dentro de `token_hash` (`sha256$<sal>$<hash>`), que es un solo hecho del
+  miembro.
 - **Sustituciones de ingredientes**: la tarea de la ficha las menciona; el pedido no las pide. Van como extensión de
   fase 3 en el plan.
 
@@ -192,6 +210,8 @@ de a dos. Si se puede, hay que partirla; si no, se queda y se declara.
 | receta_version | id ((receta_id, numero) única) | 5FN | |
 | receta_ingrediente | (receta_version_id, producto_id) | 5FN | puente (1FN) |
 | plan_comida | id | 5FN | apunta a la versión |
+| miembro | id (nombre única, token_hash única) | 5FN | rol y activo dependen solo del miembro |
+| producto_foto | id (ruta única) | 5FN | producto y elemento son hechos de la foto; trigger de coherencia |
 
 ## 3. Unidades canónicas
 
@@ -215,12 +235,14 @@ con `unidad.factor_a_base` al leer.
 | # | Ruido del pedido | Cómo lo representa el modelo |
 |---|---|---|
 | 1 | Dos bolsas de leche de días distintos son dos elementos con dos vencimientos | Dos filas en `elemento`, cada una con su `compra_id` (fecha) y su `vencimiento`. «Leche × 2» no existe como fila; es un `COUNT` sobre `v_elemento`. |
-| 2 | Dos bolsas del mismo día: una se abre y la otra no | Dos filas en `elemento` con la misma línea de compra; `abierto_en` en una y NULL en la otra. Con `vida_util.dias_abierto`, la abierta tiene vencimiento efectivo `min(vencimiento, abierto_en + dias_abierto)`. **Depende de D1 (lote vs unidad)**: si Nico elige lote, esto se pierde. |
-| 3 | El pack de N bolsas: abrir el pack no es abrir una bolsa | `presentacion.parte_id/partes` dice qué es un pack; `elemento.padre_id` cuelga las bolsas del pack. Abrir el pack = crear hijos (o marcarlo abierto); abrir una bolsa = `abierto_en` en el hijo. **Cuándo se crean los hijos es D3.** |
+| 2 | Dos bolsas del mismo día: una se abre y la otra no | Dos filas en `elemento` con la misma línea de compra; `abierto_en` en una y NULL en la otra. Con `vida_util.dias_abierto`, la abierta tiene vencimiento efectivo `min(vencimiento, abierto_en + dias_abierto)`. D1 se firmó «unidad física»: esto se conserva. |
+| 3 | El pack de N bolsas: abrir el pack no es abrir una bolsa | `presentacion.parte_id/partes` dice qué es un pack; `elemento.padre_id` cuelga las bolsas del pack. D3 se firmó «al registrar»: el alta del pack crea el padre y sus N hijos a la vez; abrir el pack = `abierto_en` en el padre; abrir una bolsa = `abierto_en` en el hijo. El saldo se cuenta solo en hojas (`v_elemento.es_hoja`). |
 | 4 | Cuál es cuál al volver a mirar la nevera | La identidad es `elemento.id`; el nombre de casa es `etiqueta` («la de la puerta», «#3»); la ubicación es `ubicacion_id`. `v_elemento` entrega «leche · bolsa 1 L · comprada 2026-11-14 · vence 2026-11-20 · puerta». |
 | 5 | Frutas y verduras sin fecha | `vida_util` + `vida_util_madurez` + `vida_util_conservacion`; el elemento guarda `madurez` y `vencimiento_origen = 'estimado'`. Regla abajo. |
 
-### Lote vs unidad física (D1): el modelo soporta ambas y no elige
+### Lote vs unidad física (D1): firmada «unidad física» el 2026-11-15
+
+Lo que sigue es el análisis previo a la firma; se conserva porque explica el coste de la otra opción.
 
 - **Unidad física** (recomendado): un `elemento` por cosa física. «Cuántas bolsas quedan» = `COUNT(*)` con saldo > 0;
   «cuál vence antes» = `MIN(vencimiento)`. Cada compra de 6 bolsas crea 6 filas; el alta rápida pide «cantidad de
@@ -244,7 +266,9 @@ vencimiento = compra.fecha + round(dias)          ;  vencimiento_origen = 'estim
 - Si el elemento se mueve de ubicación y `vencimiento_origen = 'estimado'`, se recalcula desde la fecha de compra con el
   nuevo factor. Si es `impreso` o `manual`, no se toca.
 - Si `abierto_en` no es NULL y `vida_util.dias_abierto` tampoco, el vencimiento efectivo (vista, no columna) es
-  `min(vencimiento, abierto_en + dias_abierto)`.
+  `min(vencimiento, abierto_en + dias_abierto)`. `v_elemento.vencimiento` ya es el efectivo, y cuando lo fija la
+  apertura su `vencimiento_origen` es `estimado`. Solo en hojas: abrir un pack no acorta la vida de las bolsas
+  cerradas.
 - Los factores los pone el usuario por producto. No hay tabla global «la fruta verde dura el doble» porque no hay base
   empírica para eso (riesgo R2 del plan); lo que sí hay es `vida_util.fuente` para saber de dónde salió cada número.
 
@@ -327,6 +351,7 @@ erDiagram
         int  proveedor_id FK "opcional"
         int  total_cop "opcional"
         text nota
+        int  registrada_por FK "miembro"
     }
     compra_linea {
         int  compra_id PK, FK
@@ -346,6 +371,7 @@ erDiagram
         int  padre_id FK "opcional, misma tabla"
         text etiqueta
         text nota
+        int  alta_por FK "miembro"
         text creado_en
     }
     movimiento {
@@ -355,6 +381,7 @@ erDiagram
         text tipo "consumo | merma | ajuste"
         real cantidad "unidad base"
         text motivo
+        int  miembro_id FK "quien lo registro"
         text creado_en
     }
     precio {
@@ -391,6 +418,21 @@ erDiagram
         int  porciones
         text nota
     }
+    miembro {
+        int  id PK
+        text nombre UK
+        text rol "admin | editor | lector"
+        text token_hash UK "sha256$sal$hash"
+        int  activo "0/1"
+        text creado_en
+    }
+    producto_foto {
+        int  id PK
+        int  producto_id FK
+        text ruta UK "relativa al directorio de datos"
+        text tomada_en
+        int  elemento_id FK "opcional"
+    }
 
     categoria  ||--o{ producto               : "clasifica"
     unidad     ||--o{ producto               : "es base de"
@@ -416,6 +458,11 @@ erDiagram
     producto   ||--o{ receta_ingrediente     : "es ingrediente"
     unidad     ||--o{ receta_ingrediente     : "mide"
     receta_version ||--o{ plan_comida        : "se planea"
+    miembro    |o--o{ compra                 : "registra"
+    miembro    |o--o{ elemento               : "da de alta"
+    miembro    |o--o{ movimiento             : "registra"
+    producto   ||--o{ producto_foto          : "aparece en"
+    elemento   |o--o{ producto_foto          : "entro con"
 ```
 
 Notas para el Modelador:
@@ -426,13 +473,18 @@ Notas para el Modelador:
 - Las tres autorreferencias (`ubicacion.padre_id`, `presentacion.parte_id`, `elemento.padre_id`) son relaciones
   recursivas opcionales en ambos lados.
 - Las vistas `v_presentacion_base` y `v_elemento` no se dibujan: son derivadas.
+- Las tres FK a `miembro` son opcionales en el DDL (NULL solo para filas escritas fuera de la API, como los scripts de
+  verificación); la API las llena siempre.
 
 ## 6. Lo que el DDL hace cumplir y lo que queda en la aplicación
 
 En el DDL: claves foráneas con la acción de borrado dicha en cada una; `CHECK` de forma de fecha, de rango y de
-enumeraciones; los pares «van juntos o no van»; siete triggers para las reglas que cruzan tablas (unidad base con
-factor 1, magnitudes coherentes, parte e hijo del mismo producto).
+enumeraciones; los pares «van juntos o no van»; ocho triggers para las reglas que cruzan tablas (unidad base con
+factor 1, magnitudes coherentes, parte e hijo del mismo producto y, desde NEVERA-2, la foto de un elemento es de su
+producto).
 
 En la aplicación, porque SQLite no lo puede expresar sin recursión en triggers: que un pack tenga partes antes de
 recibir elementos; que los hijos de un pack sumen como máximo `partes`; el recálculo del vencimiento estimado al mover
-de ubicación; y la creación en lote de N elementos (D1) o de los hijos de un pack (D3).
+de ubicación; y la creación en lote de N elementos (D1) o de los hijos de un pack (D3). Desde NEVERA-2, también: que el
+token se guarde solo como hash con sal, que quede siempre al menos un admin activo, que no se registren movimientos en un
+pack con hijos (van en sus hojas) y que padre_id no forme ciclos (la API no permite cambiarlo después del alta).

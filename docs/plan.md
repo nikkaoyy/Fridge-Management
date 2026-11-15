@@ -120,6 +120,13 @@ Identificación por foto (§3) y OCR de la fecha impresa. No tienen fase porque 
 
 ## 2. Decisiones que necesitan la firma de Nico
 
+> **Firmadas por Nico el 2026-11-15** (`PEDIDO-NEVERA-2.md`): D1 = (a) unidad física; D2 = (a) esquemática, sin nada
+> en el esquema; D3 = (a) el pack se explota al registrar y el saldo se cuenta solo en hojas; D4 = (b) todo o nada en
+> la interfaz, con `cantidad` aceptada por API; D5 = (a) fotos desde el alta con `producto_foto`, sin modelo de visión.
+> Al firmar se añadió un requisito nuevo que la tabla no preveía: **varias personas y dispositivos** (miembros con rol y
+> atribución de cada escritura), que deja sin efecto el «un hogar sin cuentas» de abajo. La tabla se conserva como
+> registro de lo que se pesó.
+
 Ninguna de estas se cierra aquí. El modelo y el contrato soportan todas las opciones; lo que cambia es cuántas filas
 se crean, qué hace la interfaz y qué cuesta cambiar de opinión después. La columna «cuándo» dice antes de qué fase
 hace falta la firma.
