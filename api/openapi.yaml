@@ -1,0 +1,1276 @@
+openapi: 3.0.3
+info:
+  title: Catálogo de nevera
+  version: 0.1.0
+  description: |
+    Contrato de la API del Catálogo de nevera (PEDIDO-NEVERA-0, bloque 2). Reemplaza el bloque 1 de
+    PEDIDO-NEVERA-1.md, que nunca se ejecutó.
+
+    Reglas comunes:
+    - Fechas ISO `AAAA-MM-DD`. Instantes `AAAA-MM-DDThh:mm:ssZ`.
+    - Dinero en COP como entero (pesos, sin centavos).
+    - Las cantidades de elementos y movimientos se reciben con `cantidad` + `unidad` (código) y se guardan y devuelven
+      en la **unidad base del producto** (`g`, `ml`, `u`). Ver docs/modelo-relacional.md §3.
+    - Errores uniformes: `{"error":{"codigo","mensaje"}}` con el código HTTP que corresponda.
+    - Un hogar, sin autenticación en fase 1. Puerto 8451.
+    - Cada campo de este contrato existe en db/esquema.sql. Lo que el esquema no tiene, aquí no está.
+
+    Fases del contrato:
+    - **Fase 1 (se implementa en PEDIDO-NEVERA-2)**: salud, indicadores, catálogo (categorías, unidades, ubicaciones),
+      productos y su vida útil, presentaciones, elementos con alta rápida y filtro `por_vencer`, resumen de vencimientos,
+      movimientos (merma, consumo, ajuste) e importador.
+    - **Fase 2 (declarada, no implementada)**: proveedores, precios por proveedor, recetas con versiones, planes de
+      comida y `GET /recetas/sugeridas`. Responden `501` hasta que se implementen. Marcadas con `x-estado: declarado`.
+
+    Decisiones abiertas que este contrato NO cierra (docs/plan.md, tabla de decisiones): D1 lote vs unidad física
+    decide cuántas filas crea `POST /elementos` cuando `unidades > 1`; D3 decide si registrar un pack crea sus hijos;
+    D4 decide si el consumo parcial se registra (el endpoint `POST /movimientos` existe en ambos casos).
+servers:
+  - url: http://127.0.0.1:8451
+    description: Desarrollo local
+tags:
+  - name: Salud
+  - name: Catálogo
+    description: Categorías, unidades y ubicaciones.
+  - name: Productos
+  - name: Presentaciones
+  - name: Elementos
+    description: La instancia en la nevera. Lo que vence es el elemento.
+  - name: Movimientos
+    description: Salidas de un elemento (consumo, merma, ajuste).
+  - name: Importador
+  - name: Fase 2 (declarada)
+    description: Declarado y documentado; responde 501 hasta que se implemente.
+
+paths:
+  /salud:
+    get:
+      tags: [Salud]
+      summary: Estado del servicio
+      operationId: salud
+      responses:
+        '200':
+          description: Servicio arriba
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Salud' }
+              example: { ok: true, version: "0.1.0", esquema: 1, base: "data/nevera.db" }
+
+  /indicadores:
+    get:
+      tags: [Salud]
+      summary: Números de la nevera para el panel
+      operationId: indicadores
+      responses:
+        '200':
+          description: Conteos calculados sobre la base; nada se guarda.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Indicadores' }
+              example:
+                productos: 0
+                elementos_disponibles: 0
+                vencidos: 0
+                por_vencer_7: 0
+                sin_vencimiento: 0
+                mermas_30_dias: 0
+
+  /categorias:
+    get:
+      tags: [Catálogo]
+      summary: Listar categorías
+      operationId: listarCategorias
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Categoria' } }
+    post:
+      tags: [Catálogo]
+      summary: Crear categoría
+      operationId: crearCategoria
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoriaNueva' }
+            example: { nombre: "lácteos" }
+      responses:
+        '201':
+          description: Creada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Categoria' }
+        '400': { $ref: '#/components/responses/Invalido' }
+        '409': { $ref: '#/components/responses/Conflicto' }
+
+  /unidades:
+    get:
+      tags: [Catálogo]
+      summary: Listar unidades de medida
+      description: Solo lectura en fase 1. El catálogo nace con g, kg, lb, ml, l, u (db/referencia.sql).
+      operationId: listarUnidades
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Unidad' } }
+              example:
+                - { id: 1, codigo: "g", nombre: "gramo", magnitud: "masa", factor_a_base: 1 }
+                - { id: 2, codigo: "kg", nombre: "kilogramo", magnitud: "masa", factor_a_base: 1000 }
+
+  /ubicaciones:
+    get:
+      tags: [Catálogo]
+      summary: Listar ubicaciones
+      description: Solo lectura en fase 1. Jerárquicas por `padre_id`.
+      operationId: listarUbicaciones
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Ubicacion' } }
+
+  /productos:
+    get:
+      tags: [Productos]
+      summary: Listar productos
+      operationId: listarProductos
+      parameters:
+        - name: q
+          in: query
+          description: Texto a buscar en el nombre (autocompletado del alta rápida).
+          schema: { type: string }
+        - name: categoria_id
+          in: query
+          schema: { type: integer }
+        - name: activo
+          in: query
+          description: Por defecto solo los activos.
+          schema: { type: boolean, default: true }
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Producto' } }
+    post:
+      tags: [Productos]
+      summary: Crear producto
+      operationId: crearProducto
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductoNuevo' }
+            example:
+              nombre: "leche entera"
+              categoria_id: 1
+              unidad_base: "ml"
+              perecedero: true
+              vida_util: { dias_base: 7, dias_abierto: 4, fuente: "etiqueta" }
+      responses:
+        '201':
+          description: Creado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Producto' }
+        '400': { $ref: '#/components/responses/Invalido' }
+        '409': { $ref: '#/components/responses/Conflicto' }
+
+  /productos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Productos]
+      summary: Ver producto
+      operationId: verProducto
+      responses:
+        '200':
+          description: Producto
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Producto' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+    patch:
+      tags: [Productos]
+      summary: Editar producto
+      description: |
+        Campos parciales. `unidad_base` solo se puede cambiar si el producto no tiene presentaciones ni elementos
+        (la magnitud de lo guardado dejaría de tener sentido).
+      operationId: editarProducto
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductoEdicion' }
+      responses:
+        '200':
+          description: Producto actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Producto' }
+        '400': { $ref: '#/components/responses/Invalido' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '409': { $ref: '#/components/responses/Conflicto' }
+    delete:
+      tags: [Productos]
+      summary: Borrar producto
+      description: |
+        Borrado lógico (`activo = false`) si el producto tiene elementos o historia; borrado físico si no tiene nada
+        colgando. La respuesta dice cuál de los dos pasó.
+      operationId: borrarProducto
+      responses:
+        '200':
+          description: Borrado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, modo]
+                properties:
+                  id: { type: integer }
+                  modo: { type: string, enum: [logico, fisico] }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+
+  /productos/{id}/vida-util:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Productos]
+      summary: Vida útil y factores de ajuste del producto
+      operationId: verVidaUtil
+      responses:
+        '200':
+          description: Vida útil. `null` en `base` si el producto no la tiene.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VidaUtilCompleta' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+    put:
+      tags: [Productos]
+      summary: Fijar vida útil y factores
+      description: |
+        Reemplaza la vida útil base y los factores por madurez y por ubicación. Enviar `base: null` borra la vida útil
+        (y sus factores). Los factores se reemplazan completos: lo que no venga se borra.
+      operationId: fijarVidaUtil
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VidaUtilCompleta' }
+            example:
+              base: { dias_base: 5, dias_abierto: null, fuente: "experiencia", nota: "tomate chonto en frutero" }
+              madurez: [ { madurez: "verde", factor: 1.8 }, { madurez: "madura", factor: 0.5 } ]
+              conservacion: [ { ubicacion_id: 1, factor: 1.6 } ]
+      responses:
+        '200':
+          description: Vida útil fijada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VidaUtilCompleta' }
+        '400': { $ref: '#/components/responses/Invalido' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+
+  /presentaciones:
+    get:
+      tags: [Presentaciones]
+      summary: Listar presentaciones
+      operationId: listarPresentaciones
+      parameters:
+        - name: producto_id
+          in: query
+          schema: { type: integer }
+        - name: codigo_barras
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Presentacion' } }
+    post:
+      tags: [Presentaciones]
+      summary: Crear presentación
+      description: |
+        O bien `contenido` + `unidad` (bolsa 1 L, caja 200 g), o bien `parte_id` + `partes` (pack de 12 bolsas), o
+        ninguno (a granel: se mide al comprar). La unidad debe ser de la magnitud del producto.
+      operationId: crearPresentacion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PresentacionNueva' }
+            examples:
+              bolsa:
+                value: { producto_id: 1, nombre: "bolsa 1 L", contenido: 1, unidad: "l" }
+              pack:
+                value: { producto_id: 1, nombre: "pack 12 bolsas", parte_id: 1, partes: 12 }
+              granel:
+                value: { producto_id: 2, nombre: "a granel" }
+      responses:
+        '201':
+          description: Creada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Presentacion' }
+        '400': { $ref: '#/components/responses/Invalido' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '409': { $ref: '#/components/responses/Conflicto' }
+
+  /presentaciones/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Presentaciones]
+      summary: Ver presentación
+      operationId: verPresentacion
+      responses:
+        '200':
+          description: Presentación
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Presentacion' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+    patch:
+      tags: [Presentaciones]
+      summary: Editar presentación
+      operationId: editarPresentacion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PresentacionEdicion' }
+      responses:
+        '200':
+          description: Actualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Presentacion' }
+        '400': { $ref: '#/components/responses/Invalido' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '409': { $ref: '#/components/responses/Conflicto' }
+    delete:
+      tags: [Presentaciones]
+      summary: Borrar presentación
+      description: Lógico (`activo = false`) si tiene elementos o líneas de compra; físico si no.
+      operationId: borrarPresentacion
+      responses:
+        '200':
+          description: Borrada
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, modo]
+                properties:
+                  id: { type: integer }
+                  modo: { type: string, enum: [logico, fisico] }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+
+  /elementos:
+    get:
+      tags: [Elementos]
+      summary: Listar elementos (lo que hay en la nevera)
+      description: |
+        Por defecto devuelve los disponibles (saldo > 0). `por_vencer=N` deja solo los que vencen en los próximos N
+        días o ya vencieron, ordenados por vencimiento ascendente; los sin vencimiento quedan fuera de ese filtro.
+      operationId: listarElementos
+      parameters:
+        - name: por_vencer
+          in: query
+          description: Días hacia adelante. `0` = vencen hoy o ya vencieron.
+          schema: { type: integer, minimum: 0 }
+        - name: producto_id
+          in: query
+          schema: { type: integer }
+        - name: ubicacion_id
+          in: query
+          schema: { type: integer }
+        - name: compra_id
+          in: query
+          schema: { type: integer }
+        - name: estado
+          in: query
+          description: '`disponible` (saldo > 0, por defecto), `agotado` (saldo 0) o `todos`.'
+          schema: { type: string, enum: [disponible, agotado, todos], default: disponible }
+      responses:
+        '200':
+          description: Lista ordenada por vencimiento (NULL al final) y luego por id.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Elemento' } }
+        '400': { $ref: '#/components/responses/Invalido' }
+    post:
+      tags: [Elementos]
+      summary: Alta rápida de un elemento
+      description: |
+        Lo que se llena en menos de 20 segundos: producto, presentación, cantidad, fecha de compra y vencimiento.
+
+        - `fecha_compra` por defecto hoy. Se crea o reutiliza la `compra` de ese día sin proveedor, y la línea de compra
+          de esa presentación. `precio_unitario_cop` se guarda en la línea.
+        - `cantidad` + `unidad` se convierten a la unidad base del producto. Si no vienen, se usa el contenido nominal
+          de la presentación; si tampoco hay (granel), es error 400.
+        - `vencimiento` explícito → `vencimiento_origen = "manual"`; `vencimiento_impreso: true` lo marca como
+          `"impreso"`. Sin vencimiento: si el producto tiene vida útil se estima con la regla de
+          docs/modelo-relacional.md §4 y se devuelve con `vencimiento_origen = "estimado"`; si no, queda `null` y la
+          respuesta lo dice con `vencimiento: null`.
+        - `unidades` (por defecto 1): cuántas cosas físicas iguales entran. **Qué filas crea depende de D1**:
+          con «unidad física» crea `unidades` elementos y devuelve todos; con «lote» crea uno con
+          `cantidad_inicial × unidades`. Hasta que Nico firme, el contrato devuelve un array en ambos casos.
+      operationId: crearElemento
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ElementoNuevo' }
+            examples:
+              leche_con_fecha:
+                value: { presentacion_id: 1, ubicacion_id: 5, unidades: 2, vencimiento: "2026-11-22", vencimiento_impreso: true, precio_unitario_cop: 4500 }
+              tomate_estimado:
+                value: { presentacion_id: 3, ubicacion_id: 4, cantidad: 1.2, unidad: "kg", madurez: "verde" }
+      responses:
+        '201':
+          description: Elementos creados (uno o varios según `unidades` y D1).
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Elemento' } }
+        '400': { $ref: '#/components/responses/Invalido' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+
+  /elementos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Elementos]
+      summary: Ver elemento con su saldo y movimientos
+      operationId: verElemento
+      responses:
+        '200':
+          description: Elemento
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ElementoDetalle' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+    patch:
+      tags: [Elementos]
+      summary: Editar elemento
+      description: |
+        Mover de ubicación, abrir (`abierto_en`), corregir vencimiento, poner etiqueta o madurez. Si cambia la ubicación
+        y `vencimiento_origen` es `estimado`, se recalcula. Si viene `vencimiento`, pasa a `manual`.
+      operationId: editarElemento
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ElementoEdicion' }
+            example: { ubicacion_id: 5, abierto_en: "2026-11-16", etiqueta: "la de la puerta" }
+      responses:
+        '200':
+          description: Actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Elemento' }
+        '400': { $ref: '#/components/responses/Invalido' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+    delete:
+      tags: [Elementos]
+      summary: Borrar elemento
+      description: |
+        Borrado físico con sus movimientos (fue un error de registro). Lo que se consumió o se botó no se borra: se
+        registra con `POST /movimientos`. Si el elemento tiene hijos (pack), estos quedan sueltos (`padre_id = null`).
+      operationId: borrarElemento
+      responses:
+        '204': { description: Borrado }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+
+  /vencimientos:
+    get:
+      tags: [Elementos]
+      summary: Resumen de vencimientos para el panel
+      description: |
+        Lo que el dashboard pinta arriba y en grande. Agrupa los elementos disponibles con vencimiento en tramos.
+        `dias` fija el horizonte del tramo `proximos` (por defecto 7).
+      operationId: resumenVencimientos
+      parameters:
+        - name: dias
+          in: query
+          schema: { type: integer, minimum: 1, default: 7 }
+      responses:
+        '200':
+          description: Tramos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResumenVencimientos' }
+              example:
+                hoy: "2026-11-15"
+                dias: 7
+                vencidos: []
+                hoy_vencen: []
+                proximos: []
+                sin_vencimiento: 0
+
+  /movimientos:
+    get:
+      tags: [Movimientos]
+      summary: Listar movimientos
+      operationId: listarMovimientos
+      parameters:
+        - name: elemento_id
+          in: query
+          schema: { type: integer }
+        - name: tipo
+          in: query
+          schema: { type: string, enum: [consumo, merma, ajuste] }
+        - name: desde
+          in: query
+          schema: { type: string, format: date }
+        - name: hasta
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Movimiento' } }
+    post:
+      tags: [Movimientos]
+      summary: Registrar una salida (merma, consumo o ajuste)
+      description: |
+        Descuenta del saldo del elemento. `merma` es lo que se botó (motivo: vencido, dañado, olvidado…);
+        `consumo` lo que se comió; `ajuste` corrige el saldo y puede ser negativo (apareció más).
+        Sin `cantidad` se descuenta todo el saldo (se acabó / se botó entero). No se puede dejar el saldo negativo
+        salvo con `ajuste`.
+
+        La merma del `PEDIDO-NEVERA-1` (`POST /mermas`) es `POST /movimientos` con `tipo: merma`.
+        Si el consumo parcial se usa o no en la interfaz es la decisión D4; el endpoint es el mismo.
+      operationId: crearMovimiento
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MovimientoNuevo' }
+            example: { elemento_id: 12, tipo: "merma", cantidad: 500, unidad: "ml", motivo: "vencido" }
+      responses:
+        '201':
+          description: Registrado; devuelve el movimiento y el saldo resultante.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Movimiento' }
+        '400': { $ref: '#/components/responses/Invalido' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '409':
+          description: El saldo quedaría negativo.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /importar:
+    post:
+      tags: [Importador]
+      summary: Importar un CSV de compras
+      description: |
+        Única puerta de entrada masiva de datos. CSV con cabecera y columnas
+        `nombre,categoria,unidad,cantidad,fecha_compra,fecha_vencimiento,precio_unitario` y opcionales
+        `presentacion,ubicacion,madurez,etiqueta`. Separador `,`, codificación UTF-8, decimal con punto.
+
+        - `nombre` crea el producto si no existe (con `categoria` creada si hace falta y `unidad` como base de su
+          magnitud: `kg` → base `g`). `presentacion` por defecto es «a granel» del producto.
+        - `cantidad` en la `unidad` dada, convertida a base. `fecha_compra` agrupa filas en una misma `compra`.
+        - `fecha_vencimiento` vacía → se estima si hay vida útil; si no, queda vacía.
+        - `precio_unitario` en COP, opcional.
+        - **Todo o nada**: una fila mala responde `400` con el número de fila y el motivo y no deja escrituras a medias.
+        - `?simular=1` no escribe nada y devuelve lo que haría.
+      operationId: importar
+      parameters:
+        - name: simular
+          in: query
+          description: '`1` para no escribir nada y ver el resumen.'
+          schema: { type: integer, enum: [0, 1], default: 0 }
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema: { type: string }
+            example: |
+              nombre,categoria,unidad,cantidad,fecha_compra,fecha_vencimiento,precio_unitario
+      responses:
+        '200':
+          description: Resumen (simulado o aplicado).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResumenImportacion' }
+              example:
+                simulado: true
+                filas: 0
+                creados: 0
+                productos_nuevos: []
+                compras: 0
+                omitidos: []
+        '400':
+          description: CSV inválido; `detalle.fila` y `detalle.motivo` dicen dónde.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: { codigo: "csv_invalido", mensaje: "fila 3: cantidad no es un número", detalle: { fila: 3, motivo: "cantidad no es un número" } } }
+
+  # --------------------------------------------------------------------
+  # Fase 2: declarada, no implementada. Responde 501 hasta que exista.
+  # --------------------------------------------------------------------
+
+  /proveedores:
+    get:
+      tags: [Fase 2 (declarada)]
+      summary: Listar proveedores
+      operationId: listarProveedores
+      x-estado: declarado
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Proveedor' } }
+        '501': { $ref: '#/components/responses/NoImplementado' }
+    post:
+      tags: [Fase 2 (declarada)]
+      summary: Crear proveedor
+      operationId: crearProveedor
+      x-estado: declarado
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProveedorNuevo' }
+      responses:
+        '201':
+          description: Creado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proveedor' }
+        '501': { $ref: '#/components/responses/NoImplementado' }
+
+  /precios:
+    get:
+      tags: [Fase 2 (declarada)]
+      summary: Precios por presentación y proveedor
+      description: Devuelve el histórico; `vigentes=1` deja solo el último `vigente_desde` por par.
+      operationId: listarPrecios
+      x-estado: declarado
+      parameters:
+        - name: presentacion_id
+          in: query
+          schema: { type: integer }
+        - name: proveedor_id
+          in: query
+          schema: { type: integer }
+        - name: vigentes
+          in: query
+          schema: { type: integer, enum: [0, 1], default: 0 }
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Precio' } }
+        '501': { $ref: '#/components/responses/NoImplementado' }
+    post:
+      tags: [Fase 2 (declarada)]
+      summary: Registrar un precio
+      operationId: crearPrecio
+      x-estado: declarado
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Precio' }
+      responses:
+        '201':
+          description: Registrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Precio' }
+        '501': { $ref: '#/components/responses/NoImplementado' }
+
+  /recetas:
+    get:
+      tags: [Fase 2 (declarada)]
+      summary: Listar recetas con su versión vigente
+      operationId: listarRecetas
+      x-estado: declarado
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Receta' } }
+        '501': { $ref: '#/components/responses/NoImplementado' }
+    post:
+      tags: [Fase 2 (declarada)]
+      summary: Crear receta (versión 1)
+      operationId: crearReceta
+      x-estado: declarado
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecetaNueva' }
+      responses:
+        '201':
+          description: Creada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Receta' }
+        '501': { $ref: '#/components/responses/NoImplementado' }
+
+  /recetas/sugeridas:
+    get:
+      tags: [Fase 2 (declarada)]
+      summary: Recetas que usan lo que está por vencer
+      description: |
+        Para cada receta (versión vigente), cuántos de sus ingredientes están disponibles y cuántos vencen en los
+        próximos `dias`. Ordenadas por ingredientes por vencer descendente. Es la consulta 2 de docs/verificacion.md.
+      operationId: recetasSugeridas
+      x-estado: declarado
+      parameters:
+        - name: dias
+          in: query
+          schema: { type: integer, minimum: 0, default: 3 }
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/RecetaSugerida' } }
+        '501': { $ref: '#/components/responses/NoImplementado' }
+
+  /recetas/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Fase 2 (declarada)]
+      summary: Ver receta con sus versiones
+      operationId: verReceta
+      x-estado: declarado
+      responses:
+        '200':
+          description: Receta
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecetaDetalle' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '501': { $ref: '#/components/responses/NoImplementado' }
+
+  /recetas/{id}/versiones:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Fase 2 (declarada)]
+      summary: Nueva versión de la receta
+      description: Editar una receta es crear la versión N+1; las anteriores no cambian (los planes viejos las siguen apuntando).
+      operationId: crearVersionReceta
+      x-estado: declarado
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecetaVersionNueva' }
+      responses:
+        '201':
+          description: Versión creada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecetaVersion' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '501': { $ref: '#/components/responses/NoImplementado' }
+
+  /planes:
+    get:
+      tags: [Fase 2 (declarada)]
+      summary: Planes de comida por fecha
+      operationId: listarPlanes
+      x-estado: declarado
+      parameters:
+        - name: desde
+          in: query
+          schema: { type: string, format: date }
+        - name: hasta
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/PlanComida' } }
+        '501': { $ref: '#/components/responses/NoImplementado' }
+    post:
+      tags: [Fase 2 (declarada)]
+      summary: Planear una receta para un día
+      description: Apunta a la versión vigente en ese momento; si la receta se edita después, el plan no cambia.
+      operationId: crearPlan
+      x-estado: declarado
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlanComidaNuevo' }
+      responses:
+        '201':
+          description: Planeado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlanComida' }
+        '501': { $ref: '#/components/responses/NoImplementado' }
+
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+
+  responses:
+    Invalido:
+      description: Petición inválida (campo faltante, unidad de otra magnitud, fecha mal formada…).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { codigo: "invalido", mensaje: "unidad 'g' no es de la magnitud del producto (volumen)" } }
+    NoEncontrado:
+      description: No existe.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { codigo: "no_encontrado", mensaje: "producto 7 no existe" } }
+    Conflicto:
+      description: Ya existe (nombre repetido) o no se puede por lo que tiene colgando.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { codigo: "conflicto", mensaje: "ya existe un producto llamado 'leche entera'" } }
+    NoImplementado:
+      description: Declarado en el contrato; se implementa en una fase posterior.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { codigo: "no_implementado", mensaje: "fase 2: declarado, no implementado" } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [codigo, mensaje]
+          properties:
+            codigo: { type: string, description: "Identificador estable en snake_case." }
+            mensaje: { type: string }
+            detalle:
+              type: object
+              additionalProperties: true
+              description: Datos extra del error (p. ej. `fila` y `motivo` en el importador).
+
+    Fecha:
+      type: string
+      format: date
+      pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+      example: "2026-11-15"
+
+    Salud:
+      type: object
+      required: [ok, version, esquema]
+      properties:
+        ok: { type: boolean }
+        version: { type: string, description: Versión de la aplicación. }
+        esquema: { type: integer, description: "`PRAGMA user_version` de la base." }
+        base: { type: string, description: Ruta de la base SQLite. }
+
+    Indicadores:
+      type: object
+      required: [productos, elementos_disponibles, vencidos, por_vencer_7, sin_vencimiento, mermas_30_dias]
+      properties:
+        productos: { type: integer, description: Productos activos. }
+        elementos_disponibles: { type: integer, description: Elementos con saldo > 0. }
+        vencidos: { type: integer, description: Disponibles con vencimiento anterior a hoy. }
+        por_vencer_7: { type: integer, description: Disponibles que vencen entre hoy y 7 días. }
+        sin_vencimiento: { type: integer, description: Disponibles de productos perecederos sin fecha. }
+        mermas_30_dias: { type: integer, description: Movimientos de tipo merma en los últimos 30 días. }
+
+    Categoria:
+      type: object
+      required: [id, nombre]
+      properties:
+        id: { type: integer }
+        nombre: { type: string }
+    CategoriaNueva:
+      type: object
+      required: [nombre]
+      properties:
+        nombre: { type: string, minLength: 1 }
+
+    Unidad:
+      type: object
+      required: [id, codigo, nombre, magnitud, factor_a_base]
+      properties:
+        id: { type: integer }
+        codigo: { type: string }
+        nombre: { type: string }
+        magnitud: { type: string, enum: [masa, volumen, conteo] }
+        factor_a_base: { type: number, minimum: 0, exclusiveMinimum: true }
+
+    Ubicacion:
+      type: object
+      required: [id, nombre, padre_id]
+      properties:
+        id: { type: integer }
+        nombre: { type: string }
+        padre_id: { type: integer, nullable: true }
+
+    VidaUtilBase:
+      type: object
+      required: [dias_base, fuente]
+      properties:
+        dias_base: { type: integer, minimum: 1 }
+        dias_abierto: { type: integer, minimum: 1, nullable: true }
+        fuente: { type: string, enum: [etiqueta, experiencia, referencia, estimacion] }
+        nota: { type: string, nullable: true }
+        registrado_en: { $ref: '#/components/schemas/Fecha' }
+    FactorMadurez:
+      type: object
+      required: [madurez, factor]
+      properties:
+        madurez: { type: string, enum: [verde, en_punto, madura] }
+        factor: { type: number, minimum: 0, exclusiveMinimum: true }
+    FactorConservacion:
+      type: object
+      required: [ubicacion_id, factor]
+      properties:
+        ubicacion_id: { type: integer }
+        factor: { type: number, minimum: 0, exclusiveMinimum: true }
+    VidaUtilCompleta:
+      type: object
+      required: [base, madurez, conservacion]
+      properties:
+        base:
+          allOf: [ { $ref: '#/components/schemas/VidaUtilBase' } ]
+          nullable: true
+        madurez: { type: array, items: { $ref: '#/components/schemas/FactorMadurez' } }
+        conservacion: { type: array, items: { $ref: '#/components/schemas/FactorConservacion' } }
+
+    Producto:
+      type: object
+      required: [id, nombre, categoria_id, unidad_base, perecedero, activo, vida_util, creado_en]
+      properties:
+        id: { type: integer }
+        nombre: { type: string }
+        categoria_id: { type: integer }
+        categoria: { type: string, description: Nombre de la categoría (lectura). }
+        unidad_base: { type: string, description: "Código de la unidad base: g, ml o u." }
+        perecedero: { type: boolean }
+        activo: { type: boolean }
+        nota: { type: string, nullable: true }
+        vida_util:
+          allOf: [ { $ref: '#/components/schemas/VidaUtilBase' } ]
+          nullable: true
+          description: Solo la base; los factores en `GET /productos/{id}/vida-util`.
+        creado_en: { type: string, format: date-time }
+    ProductoNuevo:
+      type: object
+      required: [nombre, categoria_id, unidad_base]
+      properties:
+        nombre: { type: string, minLength: 1 }
+        categoria_id: { type: integer }
+        unidad_base: { type: string, enum: [g, ml, u] }
+        perecedero: { type: boolean, default: true }
+        nota: { type: string, nullable: true }
+        vida_util:
+          allOf: [ { $ref: '#/components/schemas/VidaUtilBase' } ]
+          nullable: true
+    ProductoEdicion:
+      type: object
+      properties:
+        nombre: { type: string, minLength: 1 }
+        categoria_id: { type: integer }
+        unidad_base: { type: string, enum: [g, ml, u] }
+        perecedero: { type: boolean }
+        activo: { type: boolean }
+        nota: { type: string, nullable: true }
+        vida_util:
+          allOf: [ { $ref: '#/components/schemas/VidaUtilBase' } ]
+          nullable: true
+
+    Presentacion:
+      type: object
+      required: [id, producto_id, nombre, contenido, unidad, parte_id, partes, contenido_base, codigo_barras, activo]
+      properties:
+        id: { type: integer }
+        producto_id: { type: integer }
+        nombre: { type: string }
+        contenido: { type: number, nullable: true, description: "Nominal, en `unidad`." }
+        unidad: { type: string, nullable: true, description: Código de la unidad declarada. }
+        parte_id: { type: integer, nullable: true, description: Presentación contenida (pack). }
+        partes: { type: integer, nullable: true, description: Cuántas partes trae el pack. }
+        contenido_base:
+          type: number
+          nullable: true
+          description: "Derivado (`v_presentacion_base`): contenido en la unidad base del producto, resolviendo packs. `null` en granel."
+        codigo_barras: { type: string, nullable: true }
+        activo: { type: boolean }
+    PresentacionNueva:
+      type: object
+      required: [producto_id, nombre]
+      properties:
+        producto_id: { type: integer }
+        nombre: { type: string, minLength: 1 }
+        contenido: { type: number, minimum: 0, exclusiveMinimum: true }
+        unidad: { type: string, description: Código; obligatorio si viene `contenido`. }
+        parte_id: { type: integer, description: Pack; incompatible con `contenido`. }
+        partes: { type: integer, minimum: 2, description: Obligatorio si viene `parte_id`. }
+        codigo_barras: { type: string, nullable: true }
+    PresentacionEdicion:
+      type: object
+      properties:
+        nombre: { type: string, minLength: 1 }
+        contenido: { type: number, minimum: 0, exclusiveMinimum: true, nullable: true }
+        unidad: { type: string, nullable: true }
+        parte_id: { type: integer, nullable: true }
+        partes: { type: integer, minimum: 2, nullable: true }
+        codigo_barras: { type: string, nullable: true }
+        activo: { type: boolean }
+
+    Elemento:
+      type: object
+      required: [id, compra_id, fecha_compra, producto_id, producto, presentacion_id, presentacion, ubicacion_id,
+                 unidad_base, cantidad_inicial, saldo, vencimiento, vencimiento_origen, dias_para_vencer, madurez,
+                 abierto_en, padre_id, etiqueta]
+      description: Fila de la vista `v_elemento` más el precio de su línea de compra.
+      properties:
+        id: { type: integer }
+        compra_id: { type: integer }
+        fecha_compra: { $ref: '#/components/schemas/Fecha' }
+        producto_id: { type: integer }
+        producto: { type: string }
+        categoria_id: { type: integer }
+        presentacion_id: { type: integer }
+        presentacion: { type: string }
+        ubicacion_id: { type: integer }
+        unidad_base: { type: string, description: "g, ml o u. Las cantidades van en esta unidad." }
+        cantidad_inicial: { type: number }
+        saldo: { type: number, description: "Derivado: cantidad_inicial − Σ movimientos." }
+        vencimiento:
+          allOf: [ { $ref: '#/components/schemas/Fecha' } ]
+          nullable: true
+        vencimiento_origen: { type: string, enum: [impreso, estimado, manual], nullable: true }
+        dias_para_vencer: { type: integer, nullable: true, description: Negativo si ya venció. }
+        madurez: { type: string, enum: [verde, en_punto, madura], nullable: true }
+        abierto_en:
+          allOf: [ { $ref: '#/components/schemas/Fecha' } ]
+          nullable: true
+        padre_id: { type: integer, nullable: true }
+        etiqueta: { type: string, nullable: true }
+        nota: { type: string, nullable: true }
+        precio_unitario_cop: { type: integer, nullable: true, description: De la línea de compra. }
+    ElementoDetalle:
+      allOf:
+        - $ref: '#/components/schemas/Elemento'
+        - type: object
+          required: [movimientos, hijos]
+          properties:
+            movimientos: { type: array, items: { $ref: '#/components/schemas/Movimiento' } }
+            hijos: { type: array, items: { type: integer }, description: Ids de los elementos que salieron de este pack. }
+    ElementoNuevo:
+      type: object
+      required: [presentacion_id, ubicacion_id]
+      properties:
+        presentacion_id: { type: integer }
+        ubicacion_id: { type: integer }
+        cantidad: { type: number, minimum: 0, exclusiveMinimum: true, description: Por unidad física; por defecto el nominal de la presentación. }
+        unidad: { type: string, description: Código; obligatorio si viene `cantidad`. }
+        unidades: { type: integer, minimum: 1, default: 1, description: Cuántas cosas físicas iguales (ver D1). }
+        fecha_compra:
+          allOf: [ { $ref: '#/components/schemas/Fecha' } ]
+          description: Por defecto hoy.
+        vencimiento:
+          allOf: [ { $ref: '#/components/schemas/Fecha' } ]
+          nullable: true
+        vencimiento_impreso: { type: boolean, default: false, description: "`true` marca el vencimiento dado como impreso en el empaque." }
+        madurez: { type: string, enum: [verde, en_punto, madura], nullable: true }
+        precio_unitario_cop: { type: integer, minimum: 0, nullable: true }
+        padre_id: { type: integer, nullable: true, description: Pack del que sale (ver D3). }
+        etiqueta: { type: string, nullable: true }
+        nota: { type: string, nullable: true }
+    ElementoEdicion:
+      type: object
+      properties:
+        ubicacion_id: { type: integer }
+        vencimiento:
+          allOf: [ { $ref: '#/components/schemas/Fecha' } ]
+          nullable: true
+        madurez: { type: string, enum: [verde, en_punto, madura], nullable: true }
+        abierto_en:
+          allOf: [ { $ref: '#/components/schemas/Fecha' } ]
+          nullable: true
+        etiqueta: { type: string, nullable: true }
+        nota: { type: string, nullable: true }
+
+    ResumenVencimientos:
+      type: object
+      required: [hoy, dias, vencidos, hoy_vencen, proximos, sin_vencimiento]
+      properties:
+        hoy: { $ref: '#/components/schemas/Fecha' }
+        dias: { type: integer }
+        vencidos: { type: array, items: { $ref: '#/components/schemas/Elemento' } }
+        hoy_vencen: { type: array, items: { $ref: '#/components/schemas/Elemento' } }
+        proximos: { type: array, items: { $ref: '#/components/schemas/Elemento' }, description: Vencen entre mañana y `dias`. }
+        sin_vencimiento: { type: integer, description: Disponibles de productos perecederos sin fecha ni estimación. }
+
+    Movimiento:
+      type: object
+      required: [id, elemento_id, fecha, tipo, cantidad, motivo, saldo]
+      properties:
+        id: { type: integer }
+        elemento_id: { type: integer }
+        fecha: { $ref: '#/components/schemas/Fecha' }
+        tipo: { type: string, enum: [consumo, merma, ajuste] }
+        cantidad: { type: number, description: En la unidad base del producto. }
+        motivo: { type: string, nullable: true }
+        saldo: { type: number, description: Saldo del elemento después del movimiento (derivado). }
+        creado_en: { type: string, format: date-time }
+    MovimientoNuevo:
+      type: object
+      required: [elemento_id, tipo]
+      properties:
+        elemento_id: { type: integer }
+        tipo: { type: string, enum: [consumo, merma, ajuste] }
+        cantidad: { type: number, description: Sin ella se descuenta todo el saldo. Negativa solo en `ajuste`. }
+        unidad: { type: string, description: Código; por defecto la base del producto. }
+        fecha:
+          allOf: [ { $ref: '#/components/schemas/Fecha' } ]
+          description: Por defecto hoy.
+        motivo: { type: string, nullable: true }
+
+    ResumenImportacion:
+      type: object
+      required: [simulado, filas, creados, productos_nuevos, compras, omitidos]
+      properties:
+        simulado: { type: boolean }
+        filas: { type: integer, description: Filas de datos leídas (sin la cabecera). }
+        creados: { type: integer, description: Elementos que se crearon (o se crearían). }
+        productos_nuevos: { type: array, items: { type: string } }
+        compras: { type: integer, description: Compras distintas (por fecha) creadas o reutilizadas. }
+        omitidos:
+          type: array
+          items:
+            type: object
+            required: [fila, motivo]
+            properties:
+              fila: { type: integer }
+              motivo: { type: string }
+          description: Filas vacías o repetidas que se saltan sin ser error. Una fila inválida es 400, no omitida.
+
+    # ---- Fase 2 (declarada) ----
+    Proveedor:
+      type: object
+      required: [id, nombre]
+      properties:
+        id: { type: integer }
+        nombre: { type: string }
+        nota: { type: string, nullable: true }
+    ProveedorNuevo:
+      type: object
+      required: [nombre]
+      properties:
+        nombre: { type: string, minLength: 1 }
+        nota: { type: string, nullable: true }
+    Precio:
+      type: object
+      required: [presentacion_id, proveedor_id, vigente_desde, precio_cop]
+      properties:
+        presentacion_id: { type: integer }
+        proveedor_id: { type: integer }
+        vigente_desde: { $ref: '#/components/schemas/Fecha' }
+        precio_cop: { type: integer, minimum: 0 }
+    Ingrediente:
+      type: object
+      required: [producto_id, cantidad, unidad]
+      properties:
+        producto_id: { type: integer }
+        producto: { type: string, description: Nombre (lectura). }
+        cantidad: { type: number, minimum: 0, exclusiveMinimum: true }
+        unidad: { type: string, description: Código; de la magnitud del producto. }
+        opcional: { type: boolean, default: false }
+    RecetaVersion:
+      type: object
+      required: [id, receta_id, numero, porciones, ingredientes, creado_en]
+      properties:
+        id: { type: integer }
+        receta_id: { type: integer }
+        numero: { type: integer }
+        porciones: { type: integer }
+        instrucciones: { type: string, nullable: true }
+        ingredientes: { type: array, items: { $ref: '#/components/schemas/Ingrediente' } }
+        creado_en: { type: string, format: date-time }
+    RecetaVersionNueva:
+      type: object
+      required: [ingredientes]
+      properties:
+        porciones: { type: integer, minimum: 1, default: 1 }
+        instrucciones: { type: string, nullable: true }
+        ingredientes: { type: array, minItems: 1, items: { $ref: '#/components/schemas/Ingrediente' } }
+    Receta:
+      type: object
+      required: [id, nombre, version_vigente]
+      properties:
+        id: { type: integer }
+        nombre: { type: string }
+        nota: { type: string, nullable: true }
+        version_vigente: { $ref: '#/components/schemas/RecetaVersion' }
+    RecetaNueva:
+      type: object
+      required: [nombre, version]
+      properties:
+        nombre: { type: string, minLength: 1 }
+        nota: { type: string, nullable: true }
+        version: { $ref: '#/components/schemas/RecetaVersionNueva' }
+    RecetaDetalle:
+      allOf:
+        - $ref: '#/components/schemas/Receta'
+        - type: object
+          required: [versiones]
+          properties:
+            versiones: { type: array, items: { $ref: '#/components/schemas/RecetaVersion' } }
+    RecetaSugerida:
+      type: object
+      required: [receta_id, nombre, receta_version_id, ingredientes, disponibles, por_vencer]
+      properties:
+        receta_id: { type: integer }
+        nombre: { type: string }
+        receta_version_id: { type: integer }
+        ingredientes: { type: integer, description: Ingredientes no opcionales de la versión vigente. }
+        disponibles: { type: integer, description: Cuántos de ellos tienen algún elemento con saldo. }
+        por_vencer: { type: integer, description: Cuántos tienen un elemento que vence en `dias`. }
+    PlanComida:
+      type: object
+      required: [id, fecha, receta_version_id, porciones]
+      properties:
+        id: { type: integer }
+        fecha: { $ref: '#/components/schemas/Fecha' }
+        receta_version_id: { type: integer }
+        receta: { type: string, description: Nombre (lectura). }
+        porciones: { type: integer }
+        nota: { type: string, nullable: true }
+    PlanComidaNuevo:
+      type: object
+      required: [fecha, receta_id]
+      properties:
+        fecha: { $ref: '#/components/schemas/Fecha' }
+        receta_id: { type: integer, description: Se resuelve a la versión vigente al crear. }
+        porciones: { type: integer, minimum: 1, default: 1 }
+        nota: { type: string, nullable: true }
