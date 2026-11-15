@@ -1,33 +1,48 @@
 openapi: 3.0.3
 info:
   title: Catálogo de nevera
-  version: 0.1.0
+  version: 0.2.0
   description: |
-    Contrato de la API del Catálogo de nevera (PEDIDO-NEVERA-0, bloque 2). Reemplaza el bloque 1 de
-    PEDIDO-NEVERA-1.md, que nunca se ejecutó.
+    Contrato de la API del Catálogo de nevera (PEDIDO-NEVERA-0, bloque 2), corregido en PEDIDO-NEVERA-2 al implementar
+    la fase 1: miembros con rol, atribución, fotos del alta y las decisiones D1-D5 firmadas.
 
     Reglas comunes:
-    - Fechas ISO `AAAA-MM-DD`. Instantes `AAAA-MM-DDThh:mm:ssZ`.
+    - Fechas ISO `AAAA-MM-DD`. Instantes `AAAA-MM-DDThh:mm:ssZ`. «Hoy» es el día de Bogotá (el servicio corre con
+      `TZ=America/Bogota`).
     - Dinero en COP como entero (pesos, sin centavos).
     - Las cantidades de elementos y movimientos se reciben con `cantidad` + `unidad` (código) y se guardan y devuelven
       en la **unidad base del producto** (`g`, `ml`, `u`). Ver docs/modelo-relacional.md §3.
-    - Errores uniformes: `{"error":{"codigo","mensaje"}}` con el código HTTP que corresponda.
-    - Un hogar, sin autenticación en fase 1. Puerto 8451.
+    - Errores uniformes: `{"error":{"codigo","mensaje"}}` con el código HTTP que corresponda: 400 petición inválida
+      (también campo faltante, tipo equivocado o campo desconocido), 401 sin token o token inválido, 403 rol
+      insuficiente, 404 no existe, 409 conflicto con lo que hay, 501 declarado sin implementar.
+    - **Autenticación**: `Authorization: Bearer <token>` en todo salvo `GET /salud`. Cada miembro del hogar tiene su
+      token; el servidor guarda solo su hash con sal. Roles: `lector` solo GET; `editor` además POST, PUT y PATCH
+      (altas, movimientos, mermas, fotos, catálogo, importador); `admin` además gestiona miembros (`POST`/`PATCH`
+      `/miembros`) y es el único que borra (`DELETE`). Sin TLS todavía: solo para la red de la casa.
+    - Cada escritura queda atribuida a quien la hizo (`elemento.alta_por`, `movimiento.miembro_id`,
+      `compra.registrada_por`).
     - Cada campo de este contrato existe en db/esquema.sql. Lo que el esquema no tiene, aquí no está.
 
-    Fases del contrato:
-    - **Fase 1 (se implementa en PEDIDO-NEVERA-2)**: salud, indicadores, catálogo (categorías, unidades, ubicaciones),
-      productos y su vida útil, presentaciones, elementos con alta rápida y filtro `por_vencer`, resumen de vencimientos,
-      movimientos (merma, consumo, ajuste) e importador.
-    - **Fase 2 (declarada, no implementada)**: proveedores, precios por proveedor, recetas con versiones, planes de
-      comida y `GET /recetas/sugeridas`. Responden `501` hasta que se implementen. Marcadas con `x-estado: declarado`.
+    Decisiones firmadas por Nico el 2026-11-15 (docs/plan.md §2):
+    - D1 unidad física: `POST /elementos` con `unidades: N` crea N elementos.
+    - D2 esquemática: nada en este contrato.
+    - D3 el pack se explota al registrar: el alta de un pack crea el padre y sus partes como hijos. Las listas y los
+      conteos miran solo **hojas** (elementos sin hijos); el padre se consulta en `GET /elementos/{id}` y no suma.
+    - D4 todo o nada en la interfaz: `POST /movimientos` sin `cantidad` descuenta el saldo entero; con `cantidad`
+      también se acepta.
+    - D5 fotos desde el alta: campo opcional `foto` en `POST /elementos` (tabla `producto_foto`).
 
-    Decisiones abiertas que este contrato NO cierra (docs/plan.md, tabla de decisiones): D1 lote vs unidad física
-    decide cuántas filas crea `POST /elementos` cuando `unidades > 1`; D3 decide si registrar un pack crea sus hijos;
-    D4 decide si el consumo parcial se registra (el endpoint `POST /movimientos` existe en ambos casos).
+    Fases del contrato:
+    - **Fase 1 (implementada en PEDIDO-NEVERA-2)**: salud, indicadores, catálogo (categorías, unidades, ubicaciones),
+      productos y su vida útil, presentaciones, elementos con alta rápida, foto y filtro `por_vencer`, resumen de
+      vencimientos, movimientos (merma, consumo, ajuste), importador y miembros.
+    - **Fase 2 (declarada, no implementada)**: proveedores, precios por proveedor, recetas con versiones, planes de
+      comida y `GET /recetas/sugeridas`. Exigen token y rol, y responden `501`. Marcadas con `x-estado: declarado`.
 servers:
   - url: http://127.0.0.1:8451
-    description: Desarrollo local
+    description: Local (el servicio escucha en 0.0.0.0:8451, red de la casa, sin TLS)
+security:
+  - token: []
 tags:
   - name: Salud
   - name: Catálogo
@@ -39,6 +54,8 @@ tags:
   - name: Movimientos
     description: Salidas de un elemento (consumo, merma, ajuste).
   - name: Importador
+  - name: Miembros
+    description: Personas y dispositivos del hogar con su rol.
   - name: Fase 2 (declarada)
     description: Declarado y documentado; responde 501 hasta que se implemente.
 
@@ -47,14 +64,16 @@ paths:
     get:
       tags: [Salud]
       summary: Estado del servicio
+      description: Pública (sin token), para comprobar que el servicio está arriba.
       operationId: salud
+      security: []
       responses:
         '200':
           description: Servicio arriba
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Salud' }
-              example: { ok: true, version: "0.1.0", esquema: 1, base: "data/nevera.db" }
+              example: { ok: true, version: "0.2.0", esquema: 2, base: "data/nevera.db" }
 
   /indicadores:
     get:
@@ -62,6 +81,7 @@ paths:
       summary: Números de la nevera para el panel
       operationId: indicadores
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Conteos calculados sobre la base; nada se guarda.
           content:
@@ -81,6 +101,7 @@ paths:
       summary: Listar categorías
       operationId: listarCategorias
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Lista
           content:
@@ -97,6 +118,8 @@ paths:
             schema: { $ref: '#/components/schemas/CategoriaNueva' }
             example: { nombre: "lácteos" }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '201':
           description: Creada
           content:
@@ -112,6 +135,7 @@ paths:
       description: Solo lectura en fase 1. El catálogo nace con g, kg, lb, ml, l, u (db/referencia.sql).
       operationId: listarUnidades
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Lista
           content:
@@ -128,6 +152,7 @@ paths:
       description: Solo lectura en fase 1. Jerárquicas por `padre_id`.
       operationId: listarUbicaciones
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Lista
           content:
@@ -152,6 +177,7 @@ paths:
           description: Por defecto solo los activos.
           schema: { type: boolean, default: true }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Lista
           content:
@@ -173,6 +199,8 @@ paths:
               perecedero: true
               vida_util: { dias_base: 7, dias_abierto: 4, fuente: "etiqueta" }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '201':
           description: Creado
           content:
@@ -189,6 +217,7 @@ paths:
       summary: Ver producto
       operationId: verProducto
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Producto
           content:
@@ -208,6 +237,8 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ProductoEdicion' }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '200':
           description: Producto actualizado
           content:
@@ -224,6 +255,8 @@ paths:
         colgando. La respuesta dice cuál de los dos pasó.
       operationId: borrarProducto
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '200':
           description: Borrado
           content:
@@ -244,6 +277,7 @@ paths:
       summary: Vida útil y factores de ajuste del producto
       operationId: verVidaUtil
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Vida útil. `null` en `base` si el producto no la tiene.
           content:
@@ -267,6 +301,8 @@ paths:
               madurez: [ { madurez: "verde", factor: 1.8 }, { madurez: "madura", factor: 0.5 } ]
               conservacion: [ { ubicacion_id: 1, factor: 1.6 } ]
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '200':
           description: Vida útil fijada
           content:
@@ -288,6 +324,7 @@ paths:
           in: query
           schema: { type: string }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Lista
           content:
@@ -313,6 +350,8 @@ paths:
               granel:
                 value: { producto_id: 2, nombre: "a granel" }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '201':
           description: Creada
           content:
@@ -330,6 +369,7 @@ paths:
       summary: Ver presentación
       operationId: verPresentacion
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Presentación
           content:
@@ -346,6 +386,8 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/PresentacionEdicion' }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '200':
           description: Actualizada
           content:
@@ -360,6 +402,8 @@ paths:
       description: Lógico (`activo = false`) si tiene elementos o líneas de compra; físico si no.
       operationId: borrarPresentacion
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '200':
           description: Borrada
           content:
@@ -377,8 +421,10 @@ paths:
       tags: [Elementos]
       summary: Listar elementos (lo que hay en la nevera)
       description: |
-        Por defecto devuelve los disponibles (saldo > 0). `por_vencer=N` deja solo los que vencen en los próximos N
-        días o ya vencieron, ordenados por vencimiento ascendente; los sin vencimiento quedan fuera de ese filtro.
+        Solo **hojas** (D3): un pack explotado se ve por sus hijos, cada uno con su `padre_id`; el pack se consulta en
+        `GET /elementos/{id}`. Por defecto devuelve los disponibles (saldo > 0). `por_vencer=N` deja solo los que
+        vencen en los próximos N días o ya vencieron (vencimiento efectivo ≤ hoy + N), ordenados por vencimiento
+        ascendente; los sin vencimiento quedan fuera de ese filtro.
       operationId: listarElementos
       parameters:
         - name: por_vencer
@@ -399,6 +445,7 @@ paths:
           description: '`disponible` (saldo > 0, por defecto), `agotado` (saldo 0) o `todos`.'
           schema: { type: string, enum: [disponible, agotado, todos], default: disponible }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Lista ordenada por vencimiento (NULL al final) y luego por id.
           content:
@@ -419,9 +466,19 @@ paths:
           `"impreso"`. Sin vencimiento: si el producto tiene vida útil se estima con la regla de
           docs/modelo-relacional.md §4 y se devuelve con `vencimiento_origen = "estimado"`; si no, queda `null` y la
           respuesta lo dice con `vencimiento: null`.
-        - `unidades` (por defecto 1): cuántas cosas físicas iguales entran. **Qué filas crea depende de D1**:
-          con «unidad física» crea `unidades` elementos y devuelve todos; con «lote» crea uno con
-          `cantidad_inicial × unidades`. Hasta que Nico firme, el contrato devuelve un array en ambos casos.
+        - `unidades` (por defecto 1, máximo 200): cuántas cosas físicas iguales entran. D1: crea `unidades`
+          elementos, cada uno con la `cantidad` dada (o el nominal).
+        - Si la presentación es un pack (`parte_id` + `partes`), D3: cada unidad entra como un elemento padre con la
+          cantidad del pack y `partes` hijos con `padre_id` apuntándolo, cada uno con la parte proporcional, la misma
+          ubicación y el mismo vencimiento. Packs de packs se explotan hasta las hojas. La respuesta trae todos los
+          creados, padres e hijos, por id.
+        - `padre_id` cuelga el elemento de un pack ya registrado: el pack debe ser de esta presentación como parte y no
+          puede pasar de `partes` hijos (409).
+        - `foto` (D5, opcional): la imagen en base64 (JPEG, PNG, WebP o HEIC; máximo 8 MB decodificada; se acepta
+          también un data URL). Se guarda en disco y en `producto_foto` con el primer elemento creado; no hay
+          reconocimiento todavía.
+        - `precio_unitario_cop` va a la línea de compra; si esa línea (compra del día × presentación) ya tiene otro
+          precio, 409.
       operationId: crearElemento
       requestBody:
         required: true
@@ -434,13 +491,16 @@ paths:
               tomate_estimado:
                 value: { presentacion_id: 3, ubicacion_id: 4, cantidad: 1.2, unidad: "kg", madurez: "verde" }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '201':
-          description: Elementos creados (uno o varios según `unidades` y D1).
+          description: Elementos creados (uno por unidad física y, si es pack, también sus hijos).
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/Elemento' } }
         '400': { $ref: '#/components/responses/Invalido' }
         '404': { $ref: '#/components/responses/NoEncontrado' }
+        '409': { $ref: '#/components/responses/Conflicto' }
 
   /elementos/{id}:
     parameters:
@@ -450,6 +510,7 @@ paths:
       summary: Ver elemento con su saldo y movimientos
       operationId: verElemento
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Elemento
           content:
@@ -461,7 +522,10 @@ paths:
       summary: Editar elemento
       description: |
         Mover de ubicación, abrir (`abierto_en`), corregir vencimiento, poner etiqueta o madurez. Si cambia la ubicación
-        y `vencimiento_origen` es `estimado`, se recalcula. Si viene `vencimiento`, pasa a `manual`.
+        o la madurez y `vencimiento_origen` es `estimado`, se recalcula. Si viene `vencimiento`, pasa a `manual`.
+        Abrir una hoja con `vida_util.dias_abierto` mueve su vencimiento efectivo a `min(vencimiento, abierto_en +
+        dias_abierto)` (y `vencimiento_origen` se ve `estimado`); quitar `abierto_en` lo devuelve. Abrir un pack
+        marca el pack y no toca las bolsas. Mover un pack mueve los hijos que seguían en su misma ubicación.
       operationId: editarElemento
       requestBody:
         required: true
@@ -470,6 +534,8 @@ paths:
             schema: { $ref: '#/components/schemas/ElementoEdicion' }
             example: { ubicacion_id: 5, abierto_en: "2026-11-16", etiqueta: "la de la puerta" }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '200':
           description: Actualizado
           content:
@@ -483,8 +549,11 @@ paths:
       description: |
         Borrado físico con sus movimientos (fue un error de registro). Lo que se consumió o se botó no se borra: se
         registra con `POST /movimientos`. Si el elemento tiene hijos (pack), estos quedan sueltos (`padre_id = null`).
+        Solo `admin`. Las fotos del elemento se conservan sin `elemento_id`.
       operationId: borrarElemento
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '204': { description: Borrado }
         '404': { $ref: '#/components/responses/NoEncontrado' }
 
@@ -501,6 +570,7 @@ paths:
           in: query
           schema: { type: integer, minimum: 1, default: 7 }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Tramos
           content:
@@ -533,6 +603,7 @@ paths:
           in: query
           schema: { type: string, format: date }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Lista
           content:
@@ -544,11 +615,15 @@ paths:
       description: |
         Descuenta del saldo del elemento. `merma` es lo que se botó (motivo: vencido, dañado, olvidado…);
         `consumo` lo que se comió; `ajuste` corrige el saldo y puede ser negativo (apareció más).
-        Sin `cantidad` se descuenta todo el saldo (se acabó / se botó entero). No se puede dejar el saldo negativo
-        salvo con `ajuste`.
+        Sin `cantidad` se descuenta todo el saldo (se acabó / se botó entero): es lo que usa la interfaz (D4, todo o
+        nada); con `cantidad` se descuenta esa cantidad (importador, o quien quiera precisión). Ningún movimiento deja
+        el saldo negativo (409); un `ajuste` con cantidad negativa suma.
 
-        La merma del `PEDIDO-NEVERA-1` (`POST /mermas`) es `POST /movimientos` con `tipo: merma`.
-        Si el consumo parcial se usa o no en la interfaz es la decisión D4; el endpoint es el mismo.
+        Solo en hojas: un pack con hijos responde 409 `es_pack` (los movimientos van en sus bolsas). El movimiento
+        queda a nombre del miembro del token (`miembro_id`).
+
+        La merma del `PEDIDO-NEVERA-1` (`POST /mermas`) es `POST /movimientos` con `tipo: merma`; no hay ruta
+        `/mermas`.
       operationId: crearMovimiento
       requestBody:
         required: true
@@ -557,6 +632,8 @@ paths:
             schema: { $ref: '#/components/schemas/MovimientoNuevo' }
             example: { elemento_id: 12, tipo: "merma", cantidad: 500, unidad: "ml", motivo: "vencido" }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '201':
           description: Registrado; devuelve el movimiento y el saldo resultante.
           content:
@@ -565,7 +642,7 @@ paths:
         '400': { $ref: '#/components/responses/Invalido' }
         '404': { $ref: '#/components/responses/NoEncontrado' }
         '409':
-          description: El saldo quedaría negativo.
+          description: El saldo quedaría negativo (`saldo_negativo`), ya es 0 (`agotado`) o el elemento es un pack (`es_pack`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -579,13 +656,21 @@ paths:
         `nombre,categoria,unidad,cantidad,fecha_compra,fecha_vencimiento,precio_unitario` y opcionales
         `presentacion,ubicacion,madurez,etiqueta`. Separador `,`, codificación UTF-8, decimal con punto.
 
+        - Cada fila es **un** elemento (D1: una cosa física); seis bolsas son seis filas. Si la presentación de la fila
+          es un pack, entra con sus hijos (D3).
         - `nombre` crea el producto si no existe (con `categoria` creada si hace falta y `unidad` como base de su
-          magnitud: `kg` → base `g`). `presentacion` por defecto es «a granel» del producto.
-        - `cantidad` en la `unidad` dada, convertida a base. `fecha_compra` agrupa filas en una misma `compra`.
-        - `fecha_vencimiento` vacía → se estima si hay vida útil; si no, queda vacía.
-        - `precio_unitario` en COP, opcional.
-        - **Todo o nada**: una fila mala responde `400` con el número de fila y el motivo y no deja escrituras a medias.
+          magnitud: `kg` → base `g`). `presentacion` por defecto es «a granel» del producto; si la fila nombra una
+          presentación que no existe, se crea sin contenido nominal.
+        - `cantidad` en la `unidad` dada, convertida a base. `fecha_compra` agrupa filas en una misma `compra` (la del
+          día sin proveedor, como el alta rápida).
+        - `fecha_vencimiento` vacía → se estima si hay vida útil; si no, queda vacía. Dada → `vencimiento_origen =
+          manual`.
+        - `precio_unitario` en COP, entero, opcional.
+        - `ubicacion` por nombre; por defecto `nevera`.
+        - **Todo o nada**: una fila mala responde `400` con el número de fila (línea del archivo; la cabecera es la 1)
+          y el motivo, y no deja escrituras a medias.
         - `?simular=1` no escribe nada y devuelve lo que haría.
+        - Elementos, compras y productos nuevos quedan a nombre del miembro del token.
       operationId: importar
       parameters:
         - name: simular
@@ -600,6 +685,8 @@ paths:
             example: |
               nombre,categoria,unidad,cantidad,fecha_compra,fecha_vencimiento,precio_unitario
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '200':
           description: Resumen (simulado o aplicado).
           content:
@@ -619,6 +706,105 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
               example: { error: { codigo: "csv_invalido", mensaje: "fila 3: cantidad no es un número", detalle: { fila: 3, motivo: "cantidad no es un número" } } }
 
+  /miembros:
+    get:
+      tags: [Miembros]
+      summary: Listar miembros del hogar
+      description: Cualquier miembro. Nunca devuelve tokens ni hashes.
+      operationId: listarMiembros
+      responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Miembro' } }
+    post:
+      tags: [Miembros]
+      summary: Crear un miembro (solo admin)
+      description: |
+        Devuelve el token del miembro **una sola vez**; el servidor guarda solo su hash con sal. Si se pierde, se
+        renueva con `PATCH /miembros/{id}` y `renovar_token: true`.
+      operationId: crearMiembro
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MiembroNuevo' }
+            example: { nombre: "tablet de la cocina", rol: "lector" }
+      responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+        '201':
+          description: Creado, con su token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MiembroConToken' }
+        '400': { $ref: '#/components/responses/Invalido' }
+        '409': { $ref: '#/components/responses/Conflicto' }
+
+  /miembros/yo:
+    get:
+      tags: [Miembros]
+      summary: El miembro del token (para que la interfaz sepa qué mostrar)
+      operationId: verMiembroActual
+      responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '200':
+          description: Miembro
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Miembro' }
+
+  /miembros/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    patch:
+      tags: [Miembros]
+      summary: Editar un miembro (solo admin)
+      description: |
+        Cambiar nombre, rol o `activo`, o renovar su token (`renovar_token: true`: la respuesta trae el nuevo y el
+        anterior deja de valer). No se puede dejar el hogar sin ningún admin activo (409 `ultimo_admin`).
+      operationId: editarMiembro
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MiembroEdicion' }
+      responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+        '200':
+          description: Actualizado (con `token` solo si se renovó).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MiembroConToken' }
+        '400': { $ref: '#/components/responses/Invalido' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '409': { $ref: '#/components/responses/Conflicto' }
+    delete:
+      tags: [Miembros]
+      summary: Borrar un miembro (solo admin)
+      description: |
+        Lógico (`activo = false`) si ya registró algo: su nombre sigue respondiendo «quién hizo qué». Físico si no.
+        No se puede borrar el último admin activo (409 `ultimo_admin`).
+      operationId: borrarMiembro
+      responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+        '200':
+          description: Borrado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, modo]
+                properties:
+                  id: { type: integer }
+                  modo: { type: string, enum: [logico, fisico] }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '409': { $ref: '#/components/responses/Conflicto' }
+
   # --------------------------------------------------------------------
   # Fase 2: declarada, no implementada. Responde 501 hasta que exista.
   # --------------------------------------------------------------------
@@ -630,6 +816,7 @@ paths:
       operationId: listarProveedores
       x-estado: declarado
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Lista
           content:
@@ -647,6 +834,8 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ProveedorNuevo' }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '201':
           description: Creado
           content:
@@ -672,6 +861,7 @@ paths:
           in: query
           schema: { type: integer, enum: [0, 1], default: 0 }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Lista
           content:
@@ -689,6 +879,8 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/Precio' }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '201':
           description: Registrado
           content:
@@ -703,6 +895,7 @@ paths:
       operationId: listarRecetas
       x-estado: declarado
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Lista
           content:
@@ -720,6 +913,8 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/RecetaNueva' }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '201':
           description: Creada
           content:
@@ -741,6 +936,7 @@ paths:
           in: query
           schema: { type: integer, minimum: 0, default: 3 }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Lista
           content:
@@ -757,6 +953,7 @@ paths:
       operationId: verReceta
       x-estado: declarado
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Receta
           content:
@@ -780,6 +977,8 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/RecetaVersionNueva' }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '201':
           description: Versión creada
           content:
@@ -802,6 +1001,7 @@ paths:
           in: query
           schema: { type: string, format: date }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
           description: Lista
           content:
@@ -820,6 +1020,8 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/PlanComidaNuevo' }
       responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
         '201':
           description: Planeado
           content:
@@ -828,6 +1030,12 @@ paths:
         '501': { $ref: '#/components/responses/NoImplementado' }
 
 components:
+  securitySchemes:
+    token:
+      type: http
+      scheme: bearer
+      description: Token del miembro. Se entrega una vez al crearlo (o al renovarlo); el servidor guarda solo su hash.
+
   parameters:
     Id:
       name: id
@@ -836,6 +1044,18 @@ components:
       schema: { type: integer, minimum: 1 }
 
   responses:
+    NoAutenticado:
+      description: Falta el token, o no es de ningún miembro activo.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { codigo: "no_autenticado", mensaje: "falta la cabecera Authorization: Bearer <token>" } }
+    Prohibido:
+      description: El rol del miembro no alcanza para esta operación.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { codigo: "prohibido", mensaje: "el rol «lector» no puede hacer POST /elementos; hace falta «editor»" } }
     Invalido:
       description: Petición inválida (campo faltante, unidad de otra magnitud, fecha mal formada…).
       content:
@@ -889,7 +1109,7 @@ components:
       properties:
         ok: { type: boolean }
         version: { type: string, description: Versión de la aplicación. }
-        esquema: { type: integer, description: "`PRAGMA user_version` de la base." }
+        esquema: { type: integer, description: "`PRAGMA user_version` de la base (2 desde PEDIDO-NEVERA-2)." }
         base: { type: string, description: Ruta de la base SQLite. }
 
     Indicadores:
@@ -1050,7 +1270,7 @@ components:
       required: [id, compra_id, fecha_compra, producto_id, producto, presentacion_id, presentacion, ubicacion_id,
                  unidad_base, cantidad_inicial, saldo, vencimiento, vencimiento_origen, dias_para_vencer, madurez,
                  abierto_en, padre_id, etiqueta]
-      description: Fila de la vista `v_elemento` más el precio de su línea de compra.
+      description: Fila de la vista `v_elemento` (incluye el precio de su línea de compra).
       properties:
         id: { type: integer }
         compra_id: { type: integer }
@@ -1063,10 +1283,13 @@ components:
         ubicacion_id: { type: integer }
         unidad_base: { type: string, description: "g, ml o u. Las cantidades van en esta unidad." }
         cantidad_inicial: { type: number }
-        saldo: { type: number, description: "Derivado: cantidad_inicial − Σ movimientos." }
+        saldo:
+          type: number
+          description: "Derivado: cantidad_inicial − Σ movimientos en una hoja; en un pack, la suma del saldo de sus hojas (D3)."
         vencimiento:
           allOf: [ { $ref: '#/components/schemas/Fecha' } ]
           nullable: true
+          description: "Efectivo: en una hoja abierta con `dias_abierto`, min(vencimiento, abierto_en + dias_abierto)."
         vencimiento_origen: { type: string, enum: [impreso, estimado, manual], nullable: true }
         dias_para_vencer: { type: integer, nullable: true, description: Negativo si ya venció. }
         madurez: { type: string, enum: [verde, en_punto, madura], nullable: true }
@@ -1077,14 +1300,25 @@ components:
         etiqueta: { type: string, nullable: true }
         nota: { type: string, nullable: true }
         precio_unitario_cop: { type: integer, nullable: true, description: De la línea de compra. }
+        alta_por: { type: integer, nullable: true, description: "Id del miembro que lo registró (`GET /miembros`)." }
     ElementoDetalle:
       allOf:
         - $ref: '#/components/schemas/Elemento'
         - type: object
-          required: [movimientos, hijos]
+          required: [movimientos, hijos, fotos]
           properties:
             movimientos: { type: array, items: { $ref: '#/components/schemas/Movimiento' } }
             hijos: { type: array, items: { type: integer }, description: Ids de los elementos que salieron de este pack. }
+            fotos: { type: array, items: { $ref: '#/components/schemas/FotoProducto' }, description: Fotos tomadas en su alta (D5). }
+    FotoProducto:
+      type: object
+      required: [id, producto_id, ruta, tomada_en, elemento_id]
+      properties:
+        id: { type: integer }
+        producto_id: { type: integer }
+        ruta: { type: string, description: Relativa al directorio de datos del servicio. }
+        tomada_en: { type: string, format: date-time }
+        elemento_id: { type: integer, nullable: true }
     ElementoNuevo:
       type: object
       required: [presentacion_id, ubicacion_id]
@@ -1093,7 +1327,7 @@ components:
         ubicacion_id: { type: integer }
         cantidad: { type: number, minimum: 0, exclusiveMinimum: true, description: Por unidad física; por defecto el nominal de la presentación. }
         unidad: { type: string, description: Código; obligatorio si viene `cantidad`. }
-        unidades: { type: integer, minimum: 1, default: 1, description: Cuántas cosas físicas iguales (ver D1). }
+        unidades: { type: integer, minimum: 1, maximum: 200, default: 1, description: "Cuántas cosas físicas iguales: una fila por cada una (D1)." }
         fecha_compra:
           allOf: [ { $ref: '#/components/schemas/Fecha' } ]
           description: Por defecto hoy.
@@ -1103,9 +1337,14 @@ components:
         vencimiento_impreso: { type: boolean, default: false, description: "`true` marca el vencimiento dado como impreso en el empaque." }
         madurez: { type: string, enum: [verde, en_punto, madura], nullable: true }
         precio_unitario_cop: { type: integer, minimum: 0, nullable: true }
-        padre_id: { type: integer, nullable: true, description: Pack del que sale (ver D3). }
+        padre_id: { type: integer, nullable: true, description: "Pack ya registrado del que sale (D3); el alta de un pack ya crea sus hijos." }
         etiqueta: { type: string, nullable: true }
         nota: { type: string, nullable: true }
+        foto:
+          type: string
+          format: byte
+          nullable: true
+          description: "Foto del producto en base64 (D5): JPEG, PNG, WebP o HEIC, máximo 8 MB decodificada."
     ElementoEdicion:
       type: object
       properties:
@@ -1143,6 +1382,8 @@ components:
         motivo: { type: string, nullable: true }
         saldo: { type: number, description: Saldo del elemento después del movimiento (derivado). }
         creado_en: { type: string, format: date-time }
+        miembro_id: { type: integer, nullable: true, description: Quién lo registró. }
+        miembro: { type: string, nullable: true, description: Nombre de quien lo registró (lectura). }
     MovimientoNuevo:
       type: object
       required: [elemento_id, tipo]
@@ -1173,7 +1414,38 @@ components:
             properties:
               fila: { type: integer }
               motivo: { type: string }
-          description: Filas vacías o repetidas que se saltan sin ser error. Una fila inválida es 400, no omitida.
+          description: |
+            Filas vacías, que se saltan sin ser error. Una fila inválida es 400, no omitida. Dos filas idénticas no se
+            omiten: con D1 son dos cosas iguales (dos bolsas del mismo día).
+
+    Miembro:
+      type: object
+      required: [id, nombre, rol, activo, creado_en]
+      properties:
+        id: { type: integer }
+        nombre: { type: string }
+        rol: { type: string, enum: [admin, editor, lector] }
+        activo: { type: boolean }
+        creado_en: { type: string, format: date-time }
+    MiembroConToken:
+      allOf:
+        - $ref: '#/components/schemas/Miembro'
+        - type: object
+          properties:
+            token: { type: string, description: "Solo al crear o al renovar. Guárdalo: no se puede volver a ver." }
+    MiembroNuevo:
+      type: object
+      required: [nombre, rol]
+      properties:
+        nombre: { type: string, minLength: 1, description: "Persona o dispositivo («Nico», «tablet de la cocina»)." }
+        rol: { type: string, enum: [admin, editor, lector] }
+    MiembroEdicion:
+      type: object
+      properties:
+        nombre: { type: string, minLength: 1 }
+        rol: { type: string, enum: [admin, editor, lector] }
+        activo: { type: boolean }
+        renovar_token: { type: boolean, default: false }
 
     # ---- Fase 2 (declarada) ----
     Proveedor:

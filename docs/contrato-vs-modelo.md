@@ -10,6 +10,13 @@ esquema ni quitar nada del contrato. Lo que sí cambió respecto a `PEDIDO-NEVER
 `compra_linea` y no en el elemento, `ubicacion` deja de ser un enumerado y es tabla, y `POST /mermas` es
 `POST /movimientos` con `tipo: merma`.
 
+Actualizado en `PEDIDO-NEVERA-2` (bloque 2): el contrato gana miembros (`Miembro*`), la foto del alta
+(`ElementoNuevo.foto`, `FotoProducto`) y la atribución (`Elemento.alta_por`, `Movimiento.miembro_id`/`miembro`), y
+el esquema gana las tablas y columnas que los sostienen (`miembro`, `producto_foto`, `elemento.alta_por`,
+`movimiento.miembro_id`). Sigue sin haber un campo del contrato sin dónde vivir. `compra.registrada_por` no tiene
+campo en el contrato porque la fase 1 no expone compras.
+
+
 | Esquema | Campo | Origen | Dónde está en el modelo |
 |---|---|---|---|
 | Error | error | derivada | no se guarda |
@@ -114,8 +121,15 @@ esquema ni quitar nada del contrato. Lo que sí cambió respecto a `PEDIDO-NEVER
 | Elemento | etiqueta | columna | elemento.etiqueta |
 | Elemento | nota | columna | elemento.nota |
 | Elemento | precio_unitario_cop | derivada | compra_linea.precio_unitario_cop por join |
+| Elemento | alta_por | columna | elemento.alta_por |
 | ElementoDetalle | movimientos | derivada | filas de movimiento |
 | ElementoDetalle | hijos | derivada | elemento.id con padre_id = este |
+| ElementoDetalle | fotos | derivada | filas de producto_foto del elemento |
+| FotoProducto | id | columna | producto_foto.id |
+| FotoProducto | producto_id | columna | producto_foto.producto_id |
+| FotoProducto | ruta | columna | producto_foto.ruta |
+| FotoProducto | tomada_en | columna | producto_foto.tomada_en |
+| FotoProducto | elemento_id | columna | producto_foto.elemento_id |
 | ElementoNuevo | presentacion_id | columna | elemento.presentacion_id |
 | ElementoNuevo | ubicacion_id | columna | elemento.ubicacion_id |
 | ElementoNuevo | cantidad | entrada | × unidad.factor_a_base -> elemento.cantidad_inicial |
@@ -129,6 +143,7 @@ esquema ni quitar nada del contrato. Lo que sí cambió respecto a `PEDIDO-NEVER
 | ElementoNuevo | padre_id | columna | elemento.padre_id |
 | ElementoNuevo | etiqueta | columna | elemento.etiqueta |
 | ElementoNuevo | nota | columna | elemento.nota |
+| ElementoNuevo | foto | entrada | archivo en disco -> producto_foto.ruta |
 | ElementoEdicion | ubicacion_id | columna | elemento.ubicacion_id |
 | ElementoEdicion | vencimiento | columna | elemento.vencimiento |
 | ElementoEdicion | madurez | columna | elemento.madurez |
@@ -149,6 +164,8 @@ esquema ni quitar nada del contrato. Lo que sí cambió respecto a `PEDIDO-NEVER
 | Movimiento | motivo | columna | movimiento.motivo |
 | Movimiento | saldo | derivada | v_elemento.saldo tras el movimiento |
 | Movimiento | creado_en | columna | movimiento.creado_en |
+| Movimiento | miembro_id | columna | movimiento.miembro_id |
+| Movimiento | miembro | derivada | miembro.nombre por join |
 | MovimientoNuevo | elemento_id | columna | movimiento.elemento_id |
 | MovimientoNuevo | tipo | columna | movimiento.tipo |
 | MovimientoNuevo | cantidad | entrada | × unidad.factor_a_base -> movimiento.cantidad; sin ella, el saldo |
@@ -161,6 +178,18 @@ esquema ni quitar nada del contrato. Lo que sí cambió respecto a `PEDIDO-NEVER
 | ResumenImportacion | productos_nuevos | derivada | producto.nombre creados |
 | ResumenImportacion | compras | derivada | COUNT compra |
 | ResumenImportacion | omitidos | derivada | filas del CSV saltadas |
+| Miembro | id | columna | miembro.id |
+| Miembro | nombre | columna | miembro.nombre |
+| Miembro | rol | columna | miembro.rol |
+| Miembro | activo | columna | miembro.activo |
+| Miembro | creado_en | columna | miembro.creado_en |
+| MiembroConToken | token | derivada | generado al crear o renovar; solo su hash va a miembro.token_hash |
+| MiembroNuevo | nombre | columna | miembro.nombre |
+| MiembroNuevo | rol | columna | miembro.rol |
+| MiembroEdicion | nombre | columna | miembro.nombre |
+| MiembroEdicion | rol | columna | miembro.rol |
+| MiembroEdicion | activo | columna | miembro.activo |
+| MiembroEdicion | renovar_token | entrada | nuevo token -> miembro.token_hash |
 | Proveedor | id | columna | proveedor.id |
 | Proveedor | nombre | columna | proveedor.nombre |
 | Proveedor | nota | columna | proveedor.nota |
@@ -210,5 +239,5 @@ esquema ni quitar nada del contrato. Lo que sí cambió respecto a `PEDIDO-NEVER
 | PlanComidaNuevo | porciones | columna | plan_comida.porciones |
 | PlanComidaNuevo | nota | columna | plan_comida.nota |
 
-Campos cotejados: 197 · columna: 128 · derivada: 49 · entrada: 20
+Campos cotejados: 219 · columna: 145 · derivada: 52 · entrada: 22
 COTEJO CONTRATO-MODELO OK
