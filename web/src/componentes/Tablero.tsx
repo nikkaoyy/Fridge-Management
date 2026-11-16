@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ErrorApi } from "../api";
 import {
   cifras, fecha, normal, ordenSecciones, porUrgencia, porVencer, semaforo, ubicaciones, type Cifras as TCifras,
@@ -10,6 +10,10 @@ import Cifras from "./Cifras";
 import Recetas from "./Recetas";
 import Seccion from "./Seccion";
 import type { Accion } from "./Tarjeta";
+import { capacidad, escenaActual } from "../escena/capacidad";
+
+// PEDIDO-NEVERA-6: la nevera en 3D se carga aparte; la lista no descarga three.
+const Nevera3D = lazy(() => import("./Nevera3D"));
 
 interface Props {
   yo: Miembro;
@@ -43,6 +47,10 @@ export interface Sonda {
   dpr: number;
   ancho: number;
   scroll_horizontal: boolean;
+  /** PEDIDO-NEVERA-6: la vista del tablero y, con la nevera en 3D abierta, lo que cuesta dibujarla. */
+  vista: "lista" | "nevera";
+  rendimiento: unknown;
+  escena: unknown;
 }
 
 declare global {
@@ -60,6 +68,8 @@ export default function Tablero({ yo, alSalir }: Props) {
   const [plegadas, setPlegadas] = useState<Set<number>>(new Set());
   const [vista, setVista] = useState<"tablero" | "alta">("tablero");
   const [pestana, setPestana] = useState<"nevera" | "recetas">("nevera"); // PEDIDO-NEVERA-5: se añade, no se rehace
+  const cap = useMemo(capacidad, []);
+  const [vista3d, setVista3d] = useState<"lista" | "nevera">("lista"); // PEDIDO-NEVERA-6: la segunda vista
   const [ubicAlta, setUbicAlta] = useState<number | null>(null);
   const [abierta, setAbierta] = useState<{ id: number; accion: Accion } | null>(null);
   const [aviso, setAviso] = useState<{ texto: string; malo: boolean } | null>(null);
@@ -167,7 +177,13 @@ export default function Tablero({ yo, alSalir }: Props) {
       dpr: window.devicePixelRatio,
       ancho: window.innerWidth,
       scroll_horizontal: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      vista: vista3d,
+      rendimiento: null,
+      escena: null,
     };
+    // Vivos: el motor se crea después de este efecto (carga diferida) y sus cifras cambian cada cuadro.
+    Object.defineProperty(window.__nevera, "rendimiento", { get: () => escenaActual()?.rendimiento ?? null, enumerable: true });
+    Object.defineProperty(window.__nevera, "escena", { get: () => escenaActual(), enumerable: false });
   });
 
   async function ejecutar(e: Elemento, accion: Accion, valor?: string) {
@@ -188,6 +204,22 @@ export default function Tablero({ yo, alSalir }: Props) {
     }
     setAbierta(null);
     await refrescar();
+  }
+
+  function elegirVista(v: "lista" | "nevera") {
+    if (v === "nevera" && cap.impedimento) {
+      avisar(cap.impedimento);
+      v = "lista";
+    }
+    setVista3d(v);
+    setPestana("nevera");
+    setAbierta(null);
+    window.scrollTo(0, 0);
+  }
+
+  function alFallar3d(motivo: string) {
+    setVista3d("lista");
+    avisar(`La nevera en 3D no se pudo dibujar (${motivo}): sigue la lista.`, true);
   }
 
   function plegar(id: number) {
@@ -212,6 +244,14 @@ export default function Tablero({ yo, alSalir }: Props) {
       <div className="marca-app">
         <span className="sobretitulo">ARIA · casa</span>
         <h1>Nevera</h1>
+      </div>
+      <div className="interruptor" role="group" aria-label="Vista">
+        {(["lista", "nevera"] as const).map((v) => (
+          <button key={v} type="button" id={`vista-${v}`} aria-pressed={pestana === "nevera" && vista3d === v}
+                  onClick={() => elegirVista(v)}>
+            {v === "lista" ? "Lista" : "Nevera"}
+          </button>
+        ))}
       </div>
       <span className="quien" id="quien">{yo.nombre}{puede ? "" : " · solo lectura"}</span>
       <button type="button" id="salir" className="boton-texto" onClick={() => (salirArmado ? alSalir() : setSalirArmado(true))}>
@@ -286,6 +326,26 @@ export default function Tablero({ yo, alSalir }: Props) {
           avisar={avisar}
           alCocinar={refrescar}
         />
+        {avisoFlotante}
+      </main>
+    );
+  }
+
+  if (vista3d === "nevera") {
+    return (
+      <main className="tablero con-3d">
+        {barra}
+        {pestanas}
+        <Suspense fallback={<p className="cargando">Cargando la nevera…</p>}>
+          <Nevera3D
+            elementos={datos.elementos}
+            ubic={datos.ubic}
+            categorias={datos.categorias}
+            ligeroAuto={cap.ligero}
+            motivoAuto={cap.motivo}
+            alFallar={alFallar3d}
+          />
+        </Suspense>
         {avisoFlotante}
       </main>
     );

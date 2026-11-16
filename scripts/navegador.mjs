@@ -18,7 +18,9 @@ import { join } from "node:path";
 const CHROME = process.env.NEVERA_CHROME || "/opt/hermes/tools/chromium-1208/chrome-linux64/chrome";
 const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function abrir({ ancho = 390, alto = 844, escala = 2, movil = true } = {}) {
+// webgl: true (PEDIDO-NEVERA-6) da WebGL por software (SwiftShader vía ANGLE): la máquina no tiene GPU, así que lo
+// que se mide con esto es render por CPU, no un teléfono. webgl: false lo apaga del todo (para probar la caída a la lista).
+export async function abrir({ ancho = 390, alto = 844, escala = 2, movil = true, webgl = null } = {}) {
   // HOME propio: con el de la máquina, crashpad no puede escribir en ~/.config y Chrome muere al arrancar.
   const casa = mkdtempSync(join(tmpdir(), "nevera-chrome-"));
   const perfil = join(casa, "perfil");
@@ -27,7 +29,10 @@ export async function abrir({ ancho = 390, alto = 844, escala = 2, movil = true 
     "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${perfil}`, "--no-first-run",
     "--no-default-browser-check", "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
     "--disable-background-networking", "--disable-sync", "--hide-scrollbars", "--lang=es-CO",
-    `--window-size=${ancho},${alto}`, "about:blank",
+    `--window-size=${ancho},${alto}`,
+    ...(webgl === true ? ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] : []),
+    ...(webgl === false ? ["--disable-webgl", "--disable-3d-apis"] : []),
+    "about:blank",
   ], { stdio: "ignore", env: entorno });
 
   const activo = join(perfil, "DevToolsActivePort");

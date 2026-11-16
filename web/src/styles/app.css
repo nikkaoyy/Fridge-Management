@@ -325,3 +325,32 @@ textarea:focus { border-color: var(--cyan); box-shadow: var(--glow); outline: no
   .linea-receta select:first-child { grid-column: auto; }
   .quitar { grid-column: auto; }
 }
+
+/* ---------- La nevera en 3D (PEDIDO-NEVERA-6) ---------- */
+.interruptor {
+  display: inline-grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px; flex: none;
+  background: var(--void-800); border: 1px solid var(--line); border-radius: 999px;
+}
+.interruptor button {
+  min-height: 34px; padding: 0 12px; border: 1px solid transparent; border-radius: 999px; background: transparent;
+  color: var(--ink-muted); font-size: 13px; cursor: pointer;
+}
+.interruptor button[aria-pressed="true"] { color: var(--ink); background: var(--void-700); border-color: var(--cyan); }
+.con-3d { padding-bottom: 12px; }
+.vista-3d { display: flex; flex-direction: column; gap: 8px; }
+.barra-3d { display: flex; align-items: center; gap: 8px; }
+.resumen-3d { flex: 1; min-width: 0; margin: 0; color: var(--ink-muted); font-size: 13px; }
+.t-danger { color: var(--danger); }
+.t-warn { color: var(--warn); }
+.chip#modo-ligero[aria-pressed="true"] { border-color: var(--cyan); color: var(--cyan); background: color-mix(in srgb, var(--cyan) 12%, var(--void-800)); }
+.escena {
+  /* En vertical el encuadre lo manda el ancho: más alto que el ancho solo sería vacío. */
+  position: relative; height: min(calc(100dvh - 220px), 108vw); min-height: 360px; overflow: hidden;
+  background: var(--void-900); border: 1px solid var(--line); border-radius: var(--radius-lg);
+}
+.escena-lienzo { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.escena-lienzo.arrastrando { cursor: grabbing; }
+.leyenda-3d { list-style: none; margin: 0; padding: 0 2px; display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--ink-muted); font-size: 12px; }
+.leyenda-3d li { display: flex; align-items: center; gap: 6px; }
+.leyenda-3d .marca { border-radius: 50%; }
+.ayuda-3d { flex-basis: 100%; color: var(--ink-faint); }

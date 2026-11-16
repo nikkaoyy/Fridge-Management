@@ -4,7 +4,8 @@ import react from "@vitejs/plugin-react";
 // El build sale a web/dist, que es lo que sirve FastAPI (app/pantalla.py) en el 8451. Una sola cosa que arrancar.
 export default defineConfig({
   plugins: [react()],
-  build: { outDir: "dist", emptyOutDir: true, assetsInlineLimit: 0 },
+  // chunkSizeWarningLimit: la nevera en 3D va en su propio trozo (three, ~590 kB) y solo se baja al abrirla.
+  build: { outDir: "dist", emptyOutDir: true, assetsInlineLimit: 0, chunkSizeWarningLimit: 650 },
   // Solo para desarrollo (npm run dev): la API va al servicio en 8451.
   server: {
     host: "0.0.0.0",
