@@ -26,7 +26,8 @@ export async function abrir({ ancho = 390, alto = 844, escala = 2 } = {}) {
   const proc = spawn(CHROME, [
     "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${perfil}`, "--no-first-run",
     "--no-default-browser-check", "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
-    "--disable-background-networking", "--disable-sync", "--hide-scrollbars", "--lang=es-CO", "about:blank",
+    "--disable-background-networking", "--disable-sync", "--hide-scrollbars", "--lang=es-CO",
+    `--window-size=${ancho},${alto}`, "about:blank",
   ], { stdio: "ignore", env: entorno });
 
   const activo = join(perfil, "DevToolsActivePort");
@@ -103,6 +104,16 @@ export async function abrir({ ancho = 390, alto = 844, escala = 2 } = {}) {
         if (Date.now() > fin) throw new Error("no se cumplió a tiempo: " + expresion);
         await espera(50);
       }
+    },
+    async tocar(selector) {
+      // Un toque de verdad (touchStart/touchEnd en el centro del elemento), como el pulgar en el móvil. Además de ser
+      // más fiel que .click(), tras un .click() programático Chrome headless puede no repintar el pie fijo.
+      const c = await evaluar(`(() => { const n = document.querySelector(${JSON.stringify(selector)}); if (!n) return null;
+        n.scrollIntoView({ block: "nearest" }); const r = n.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      if (!c) throw new Error("no está para tocar: " + selector);
+      await cmd("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: c.x, y: c.y }] });
+      await cmd("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     },
     async pintado() {   // dos frames: lo que se ve ya está pintado
       await evaluar("new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))");

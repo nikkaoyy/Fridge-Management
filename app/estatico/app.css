@@ -39,7 +39,7 @@ body {
 
 button, input, select { font: inherit; color: inherit; }
 
-button { cursor: pointer; }
+button { cursor: pointer; -webkit-tap-highlight-color: transparent; }  /* sin el rectángulo azul de Android */
 button:disabled { opacity: .55; cursor: default; }
 
 :focus-visible { outline: 3px solid #4d90c7; outline-offset: 2px; }

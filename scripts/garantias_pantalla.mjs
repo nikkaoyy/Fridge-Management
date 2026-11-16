@@ -14,6 +14,7 @@
 //   3. Lector: /miembros/yo va antes que cualquier otra petición a la API; ve la lista y ningún botón que no puede
 //      usar (ni acciones ni «Agregar»); el servidor igual le responde 403 si lo intenta a mano.
 //   4. Token revocado en el servidor: la pantalla lo olvida y saca los datos del DOM.
+//   (y el semáforo: el elemento de prueba vence hoy y tiene que salir en rojo, que la base real hoy no tiene)
 //   5. Editor: sí ve las cuatro acciones y «Agregar»; sin scroll horizontal en la lista ni en el alta.
 // Los tokens no se imprimen.
 import { abrir } from "./navegador.mjs";
@@ -85,6 +86,9 @@ try {
      `lector: /miembros/yo va primero (${tras.length} peticiones, todas con token)`);
   ok(tras.every((p) => p.metodo === "GET"), "lector: la pantalla solo hizo GET");
   ok((await texto()).includes(NOMBRE), "lector: ve la lista");
+  const pastilla = await nav.evaluar(`(() => { const l = document.querySelector('#lista li');
+      return l.className + ' | ' + l.querySelector('.dias').textContent; })()`);
+  ok(/sem-rojo/.test(pastilla) && /hoy$/.test(pastilla), `semáforo: lo que vence hoy sale en rojo («${pastilla}»)`);
   const botones = await nav.evaluar("document.querySelectorAll('.acciones, .confirma, button.accion, [data-accion]').length");
   ok(botones === 0, `lector: ningún botón de acción en la lista (${botones})`);
   ok(await nav.evaluar("document.querySelector('#ir-alta').hidden"), "lector: «Agregar» no aparece");

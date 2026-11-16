@@ -2,7 +2,8 @@
 
 Backend del catálogo de la nevera de la casa: qué hay, qué vence, qué se botó y quién lo hizo. FastAPI + SQLite, sin
 ORM. El modelo está en `docs/modelo-relacional.md`, el DDL en `db/esquema.sql`, el contrato en `api/openapi.yaml` y el
-plan en `docs/plan.md`. Fase 1 del plan (`PEDIDO-NEVERA-2.md`).
+plan en `docs/plan.md`. Fase 1 del plan (`PEDIDO-NEVERA-2.md`) y su primera pantalla (`PEDIDO-NEVERA-3.md`).
+Dónde está todo hoy: `docs/ESTADO.md`.
 
 ## Requisitos
 
@@ -64,6 +65,30 @@ guardó en `data/admin.token` (0600, fuera de git).
 
 **Sin TLS la autenticación va en claro**: el servicio es para la red de la casa. Cómo se publicaría y qué falta, en
 `docs/informe-nevera-2.md`.
+
+## Pantalla
+
+`http://<máquina>:8451/` es una página para el móvil servida por el mismo FastAPI: `GET /` devuelve
+`app/estatico/index.html` y `/estatico/*` sirve `app.js` y `app.css`, escritos a mano (sin build, sin dependencias).
+Pide el token del miembro, lo valida con `GET /miembros/yo` y lo guarda solo en ese dispositivo. Usa solo endpoints
+del contrato; `/` y `/estatico/*` no llevan datos ni están en `api/openapi.yaml`. Detalle en `INFORME-NEVERA-3.md`.
+
+Verificación en navegador (Chrome headless de la máquina, por DevTools Protocol, con Node; nada que instalar):
+
+```
+node scripts/humo_pantalla.mjs http://127.0.0.1:8451 data/admin.token docs   # base real: edita y devuelve un vencimiento
+.venv/bin/python -I scripts/medir_png.py docs/pantalla-3.png docs/alta-3.png  # medir las capturas antes de creerlas
+```
+
+`scripts/garantias_pantalla.mjs` (sin token no hay datos, lector sin botones, token revocado) **crea filas** y solo
+corre contra una base en `/tmp`:
+
+```
+mkdir /tmp/nevera-garantias && export NEVERA_DATOS=/tmp/nevera-garantias NEVERA_HOST=127.0.0.1 NEVERA_PUERTO=8452 \
+  NEVERA_ADMIN_TOKEN="$(openssl rand -hex 24)"
+scripts/arrancar.sh && node scripts/garantias_pantalla.mjs http://127.0.0.1:8452; scripts/parar.sh
+rm -rf /tmp/nevera-garantias
+```
 
 ## Humo
 
