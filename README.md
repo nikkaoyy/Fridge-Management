@@ -108,6 +108,22 @@ rm -rf /tmp/nevera-garantias
 Ojo: `parar.sh`/`arrancar.sh` leen `NEVERA_DATOS` y `NEVERA_PUERTO` del entorno; sin ellos actúan sobre el servicio
 real del 8451. Exportarlos en el mismo shell que los llama.
 
+### La nevera en 3D (`PEDIDO-NEVERA-6.md`)
+
+Interruptor **Lista / Nevera** en la cabecera (se recuerda en `localStorage`). La escena es el motor de PYTHAGORAS
+copiado con su origen en `web/src/escena/` (cada archivo copiado lo dice en su primera línea; `tests/test_escena.py`
+coteja las copias con `/opt/data/pythagoras` cuando está en la máquina). three 0.187.0, la misma versión que PYTHAGORAS,
+va en un trozo aparte (`Nevera3D-*.js`, ~590 kB, ~150 kB gzip) que solo se descarga al abrir la nevera. Sin WebGL o en
+un dispositivo muy justo, la app abre en la lista y lo dice una vez. Sonda en `window.__nevera.rendimiento` (fps,
+calls, triangles, modoLigero, cuerpos, dpr…) y `window.__nevera.escena` (compartimentos, orden, etiquetas, encuadre).
+
+```
+node scripts/nevera3d_pantalla.mjs http://127.0.0.1:8451 data/admin.token docs   # base real, SOLO LEE; capturas
+# --escribe (Abrí y Se acabó desde la escena) solo contra una copia en /tmp servida en 8452; se niega en el 8451
+```
+
+Chrome dibuja con SwiftShader (por CPU): los fps que da son para comparar, no los de un teléfono.
+
 ## Humo
 
 `scripts/humo.sh` prueba con `curl` el servicio vivo (salud, alta de producto y de pack, movimientos, vencimientos,
