@@ -49,6 +49,32 @@ NEVERA_ADMIN_TOKEN='…' TZ=America/Bogota .venv/bin/uvicorn app.main:app --host
 - `TZ=America/Bogota`: «hoy» (vencimientos, compra del día) es el día de Bogotá, no el de UTC.
 - `NEVERA_DATOS`: directorio de datos (base, fotos). Por defecto `data/` dentro del repositorio.
 
+En segundo plano, con log a archivo (lo normal):
+
+```
+NEVERA_ADMIN_TOKEN="$(cat data/admin.token)" scripts/arrancar.sh   # primer arranque
+scripts/arrancar.sh                                                 # los siguientes
+scripts/parar.sh
+```
+
+`arrancar.sh` comprueba antes que el puerto esté libre (y se niega a usar 8445-8450), deja el log en
+`data/servicio.log` y el PID en `data/servicio.pid`, y espera a que `/salud` responda. `NEVERA_HOST` y `NEVERA_PUERTO`
+lo cambian (p. ej. `NEVERA_HOST=127.0.0.1` detrás de un proxy con TLS). El token del primer admin de la base real se
+guardó en `data/admin.token` (0600, fuera de git).
+
+**Sin TLS la autenticación va en claro**: el servicio es para la red de la casa. Cómo se publicaría y qué falta, en
+`docs/informe-nevera-2.md`.
+
+## Humo
+
+`scripts/humo.sh` prueba con `curl` el servicio vivo (salud, alta de producto y de pack, movimientos, vencimientos,
+403 de lector). **Crea filas**: correrlo contra una base desechable, nunca contra `data/`:
+
+```
+mkdir /tmp/nevera-humo && export NEVERA_DATOS=/tmp/nevera-humo NEVERA_ADMIN_TOKEN="$(openssl rand -hex 24)"
+scripts/arrancar.sh && scripts/humo.sh; scripts/parar.sh
+```
+
 ## Pruebas
 
 ```
