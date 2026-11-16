@@ -7,6 +7,7 @@ import {
 import type { Categoria, Elemento, Miembro, Producto, ResumenVencimientos, Ubicacion, Unidad } from "../tipos";
 import Alta from "./Alta";
 import Cifras from "./Cifras";
+import Recetas from "./Recetas";
 import Seccion from "./Seccion";
 import type { Accion } from "./Tarjeta";
 
@@ -58,6 +59,7 @@ export default function Tablero({ yo, alSalir }: Props) {
   const [soloPorVencer, setSoloPorVencer] = useState(false);
   const [plegadas, setPlegadas] = useState<Set<number>>(new Set());
   const [vista, setVista] = useState<"tablero" | "alta">("tablero");
+  const [pestana, setPestana] = useState<"nevera" | "recetas">("nevera"); // PEDIDO-NEVERA-5: se añade, no se rehace
   const [ubicAlta, setUbicAlta] = useState<number | null>(null);
   const [abierta, setAbierta] = useState<{ id: number; accion: Accion } | null>(null);
   const [aviso, setAviso] = useState<{ texto: string; malo: boolean } | null>(null);
@@ -146,7 +148,7 @@ export default function Tablero({ yo, alSalir }: Props) {
       cuenta[s] = (cuenta[s] ?? 0) + 1;
     }
     window.__nevera = {
-      listo: !!datos && vista === "tablero",
+      listo: !!datos && vista === "tablero" && pestana === "nevera",
       hoy: datos?.hoy ?? null,
       pintados: document.querySelectorAll("[data-elemento]").length,
       elementos: datos?.elementos.length ?? 0,
@@ -218,6 +220,17 @@ export default function Tablero({ yo, alSalir }: Props) {
     </header>
   );
 
+  const pestanas = (
+    <nav className="pestanas" aria-label="Secciones">
+      {(["nevera", "recetas"] as const).map((k) => (
+        <button key={k} type="button" id={`pestana-${k}`} className="pestana" aria-current={pestana === k ? "page" : undefined}
+                onClick={() => { setPestana(k); setAbierta(null); window.scrollTo(0, 0); }}>
+          {k === "nevera" ? "Nevera" : "Recetas"}
+        </button>
+      ))}
+    </nav>
+  );
+
   if (!datos || !c) {
     return (
       <main className="tablero">
@@ -254,10 +267,34 @@ export default function Tablero({ yo, alSalir }: Props) {
 
   const nombreUbic = (id: number) => datos.ubic.porId.get(id)?.nombre ?? `ubicación ${id}`;
   const nadaEnCasa = datos.elementos.length === 0;
+  const avisoFlotante = aviso && (
+    <div id="aviso" className={`aviso${aviso.malo ? " malo" : ""}`} role="status" aria-live="polite">{aviso.texto}</div>
+  );
+
+  if (pestana === "recetas") {
+    return (
+      <main className="tablero">
+        {barra}
+        {pestanas}
+        <Recetas
+          puede={puede}
+          elementos={datos.elementos}
+          productos={datos.productos}
+          unidades={datos.unidades}
+          hoy={datos.hoy}
+          nombreUbic={nombreUbic}
+          avisar={avisar}
+          alCocinar={refrescar}
+        />
+        {avisoFlotante}
+      </main>
+    );
+  }
 
   return (
     <main className="tablero">
       {barra}
+      {pestanas}
       <Cifras c={c} />
 
       <div className="herramientas">
@@ -309,9 +346,7 @@ export default function Tablero({ yo, alSalir }: Props) {
           + Agregar
         </button>
       )}
-      {aviso && (
-        <div id="aviso" className={`aviso${aviso.malo ? " malo" : ""}`} role="status" aria-live="polite">{aviso.texto}</div>
-      )}
+      {avisoFlotante}
     </main>
   );
 }
