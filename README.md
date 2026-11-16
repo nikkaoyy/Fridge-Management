@@ -2,7 +2,7 @@
 
 Backend del catálogo de la nevera de la casa: qué hay, qué vence, qué se botó y quién lo hizo. FastAPI + SQLite, sin
 ORM. El modelo está en `docs/modelo-relacional.md`, el DDL en `db/esquema.sql`, el contrato en `api/openapi.yaml` y el
-plan en `docs/plan.md`. Fase 1 del plan (`PEDIDO-NEVERA-2.md`) y su primera pantalla (`PEDIDO-NEVERA-3.md`).
+plan en `docs/plan.md`. Fase 1 del plan (`PEDIDO-NEVERA-2.md`), su primera pantalla (`PEDIDO-NEVERA-3.md`) y el tablero en React con la piel de ARIA (`PEDIDO-NEVERA-4.md`).
 Dónde está todo hoy: `docs/ESTADO.md`.
 
 ## Requisitos
@@ -68,20 +68,35 @@ guardó en `data/admin.token` (0600, fuera de git).
 
 ## Pantalla
 
-`http://<máquina>:8451/` es una página para el móvil servida por el mismo FastAPI: `GET /` devuelve
-`app/estatico/index.html` y `/estatico/*` sirve `app.js` y `app.css`, escritos a mano (sin build, sin dependencias).
-Pide el token del miembro, lo valida con `GET /miembros/yo` y lo guarda solo en ese dispositivo. Usa solo endpoints
-del contrato; `/` y `/estatico/*` no llevan datos ni están en `api/openapi.yaml`. Detalle en `INFORME-NEVERA-3.md`.
+`http://<máquina>:8451/` es el tablero: React 19 + Vite 8 + TypeScript en `web/`, construido a `web/dist` y servido
+por el **mismo** FastAPI (`app/pantalla.py`: `/`, `/assets/*`, `/fonts/*`, `/favicon.svg`). Una sola cosa que arrancar:
+`scripts/arrancar.sh` no cambia. Requiere Node ≥ 22 solo para construir.
+
+```
+cd web && npm ci && npm run build      # deja web/dist; el servicio lo sirve sin reiniciar
+```
+
+Sin `web/dist` (repositorio recién clonado), `/` responde `503` con un HTML que dice cómo construirlo. `web/dist` y
+`web/node_modules` están en `.gitignore`.
+
+- **Piel de ARIA**: los tokens se copian tal cual de `/opt/data/pythagoras/web/src/styles/tokens.css` en un
+  `<style id="piel-aria">` del `<head>` (`tests/test_pantalla.py` lo coteja byte a byte); un solo color propio,
+  `--danger: #ef5f7a`. Inter, Space Grotesk y JetBrains Mono autohospedadas en `web/public/fonts`. `app.css` no
+  escribe ningún color: solo `var(--…)` y `color-mix()` sobre ellas.
+- **Token**: igual que en NEVERA-3 (misma clave de `localStorage`); `GET /miembros/yo` antes de cualquier dato.
+- Solo endpoints del contrato; ni `/` ni los estáticos llevan datos ni están en `api/openapi.yaml`. CSP `'self'` sin
+  scripts en línea; los `<style>` del `index.html` se permiten por su hash, calculado sobre el archivo servido.
+- Detalle y decisiones: `INFORME-NEVERA-4.md`.
 
 Verificación en navegador (Chrome headless de la máquina, por DevTools Protocol, con Node; nada que instalar):
 
 ```
-node scripts/humo_pantalla.mjs http://127.0.0.1:8451 data/admin.token docs   # base real: edita y devuelve un vencimiento
-.venv/bin/python -I scripts/medir_png.py docs/pantalla-3.png docs/alta-3.png  # medir las capturas antes de creerlas
+node scripts/humo_pantalla.mjs http://127.0.0.1:8451 data/admin.token docs   # base real, SOLO LEE; capturas
+.venv/bin/python -I scripts/medir_png.py docs/dashboard-4.png docs/movil-4.png  # medir antes de creer
 ```
 
-`scripts/garantias_pantalla.mjs` (sin token no hay datos, lector sin botones, token revocado) **crea filas** y solo
-corre contra una base en `/tmp`:
+`scripts/garantias_pantalla.mjs` (token, lector, revocado, cifras contra la API, acciones, alta con foto) **crea
+filas** y solo corre contra una base en `/tmp`:
 
 ```
 mkdir /tmp/nevera-garantias && export NEVERA_DATOS=/tmp/nevera-garantias NEVERA_HOST=127.0.0.1 NEVERA_PUERTO=8452 \
@@ -89,6 +104,9 @@ mkdir /tmp/nevera-garantias && export NEVERA_DATOS=/tmp/nevera-garantias NEVERA_
 scripts/arrancar.sh && node scripts/garantias_pantalla.mjs http://127.0.0.1:8452; scripts/parar.sh
 rm -rf /tmp/nevera-garantias
 ```
+
+Ojo: `parar.sh`/`arrancar.sh` leen `NEVERA_DATOS` y `NEVERA_PUERTO` del entorno; sin ellos actúan sobre el servicio
+real del 8451. Exportarlos en el mismo shell que los llama.
 
 ## Humo
 
