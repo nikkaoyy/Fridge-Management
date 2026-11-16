@@ -36,7 +36,7 @@ export interface InfoRendimiento {
   msCuadro: number | null;
   calls: number;
   triangles: number;
-  /** Modo ligero: dpr ≤ 1,5, cuerpos de 8 lados en vez de 14, sin antialias si estaba activo al abrir. */
+  /** Modo ligero: dpr ≤ 1,5, cuerpos de 7 lados en vez de 12 (LADOS de formas.ts), sin antialias si estaba activo al abrir. */
   modoLigero: boolean;
   /** Por qué: `pointer: coarse`, `devicePixelRatio ≥ 2`, `elegido a mano` o `escritorio` (no se activó). */
   motivoLigero: string;
@@ -50,7 +50,7 @@ export interface InfoRendimiento {
   /** Piezas por forma y triángulos de una pieza de cada forma con la geometría de ahora. */
   formas: Record<Forma, number>;
   triangulosPorForma: Record<Forma, number>;
-  /** «14 lados» o, en modo ligero, «8 lados». */
+  /** «12 lados» o, en modo ligero, «7 lados». */
   geometria: string;
   /** Aros de urgencia, sombras de contacto y halos que laten (lo que vence en ≤ 2 días). */
   aros: number;
@@ -169,6 +169,19 @@ interface Flotante {
   quiero: boolean;
   balda: string;
   caja: Caja | null; // dónde quedó en pantalla en el último cuadro (para tocar la pastilla)
+  monton: string | null; // si es la pastilla de un montón («×3» o «plegar»), cuál
+}
+
+/** Una etiqueta flotante que toca ahora: qué dice, de quién cuelga y, si es la pastilla de un montón, cuál. */
+interface Quiero {
+  titulo: string;
+  sub: string | null;
+  estilo: "elemento" | "nombre" | "monton";
+  color: string;
+  cosa: Cosa;
+  arriba: boolean;
+  balda: string;
+  monton: string | null;
 }
 
 const FOV = 40;
@@ -773,8 +786,11 @@ export class MotorNevera {
    *   etiquetas fijas: solo la de la elegida;
    * - la pastilla de cada montón («×4»), o «plegar» encima de la primera cosa de uno desplegado.
    */
-  private quiero(): Map<string, { titulo: string; sub: string | null; estilo: "elemento" | "nombre" | "monton"; color: string; cosa: Cosa; arriba: boolean; balda: string }> {
-    const l = new Map<string, { titulo: string; sub: string | null; estilo: "elemento" | "nombre" | "monton"; color: string; cosa: Cosa; arriba: boolean; balda: string }>();
+  private quiero(): Map<string, Quiero> {
+    const l = new Map<string, Quiero>();
+    // La clave lleva todo lo que se pinta (texto, días, color): si algo cambia, es otra etiqueta y la vieja se apaga.
+    // Así «×3» y «plegar» del mismo montón no comparten sprite, ni se queda un día viejo tras recargar la lista.
+    const poner = (tipo: string, q: Quiero) => l.set(`${tipo}:${q.cosa.clave}|${q.titulo}|${q.sub ?? ""}|${q.color}`, q);
     const hex = (c: THREE.Color) => `#${c.getHexString()}`;
     const balda = (c: Cosa) => `${c.comp}#${c.superficie}`;
     const sub = (c: Cosa) => (c.monton ? `lo primero: ${textoDias(c.dias)}` : textoDias(c.dias));
@@ -782,7 +798,7 @@ export class MotorNevera {
     for (const c of [this.hover, sel]) {
       if (!c) continue;
       const titulo = c.monton ? `${c.nombre} · toca para desplegar` : c.producto;
-      l.set(`e:${c.clave}:${titulo}`, { titulo, sub: sub(c), estilo: "elemento", color: hex(c.colorAro), cosa: c, arriba: false, balda: balda(c) });
+      poner("e", { titulo, sub: sub(c), estilo: "elemento", color: hex(c.colorAro), cosa: c, arriba: false, balda: balda(c), monton: null });
     }
     if (!this.tactil) {
       const porComp = new Map<string, Cosa[]>();
@@ -811,17 +827,17 @@ export class MotorNevera {
         }
         for (const c of elegidas) {
           if (c === this.hover || c === sel) continue;
-          l.set(`n:${c.clave}:${c.nombre}`, { titulo: c.nombre, sub: textoDias(c.dias), estilo: "nombre", color: hex(c.colorAro), cosa: c, arriba: false, balda: balda(c) });
+          poner("n", { titulo: c.nombre, sub: textoDias(c.dias), estilo: "nombre", color: hex(c.colorAro), cosa: c, arriba: false, balda: balda(c), monton: null });
         }
       }
     }
     const plegar = new Set<string>();
     for (const c of this.cosas) {
       if (c.monton) {
-        l.set(`m:${c.clave}`, { titulo: `×${c.ids.length}`, sub: null, estilo: "monton", color: hex(c.colorAro), cosa: c, arriba: true, balda: balda(c) });
+        poner("m", { titulo: `×${c.ids.length}`, sub: null, estilo: "monton", color: hex(c.colorAro), cosa: c, arriba: true, balda: balda(c), monton: c.monton });
       } else if (c.desplegadaDe && !plegar.has(c.desplegadaDe)) {
         plegar.add(c.desplegadaDe);
-        l.set(`m:${c.desplegadaDe}`, { titulo: "plegar", sub: null, estilo: "monton", color: hex(c.colorAro), cosa: c, arriba: true, balda: balda(c) });
+        poner("m", { titulo: "plegar", sub: null, estilo: "monton", color: hex(c.colorAro), cosa: c, arriba: true, balda: balda(c), monton: c.desplegadaDe });
       }
     }
     return l;
@@ -850,7 +866,7 @@ export class MotorNevera {
       e.opacidad = 0;
       this.ajustarEtiqueta(e);
       this.escena.add(e.sprite);
-      this.flotantes.set(k, { e, clave: q.cosa.clave, arriba: q.arriba, quiero: true, balda: q.balda, caja: null });
+      this.flotantes.set(k, { e, clave: q.cosa.clave, arriba: q.arriba, quiero: true, balda: q.balda, caja: null, monton: q.monton });
     }
   }
 
@@ -888,8 +904,12 @@ export class MotorNevera {
     for (const f of this.flotantes.values()) {
       const c = this.porClave.get(f.clave);
       if (!c) {
+        // Su cosa ya no está (p. ej. un montón que se plegó): se desvanece donde estaba y luego se borra. Sin este
+        // avanzar su opacidad no bajaba y la etiqueta quedaba dibujada para siempre.
         f.quiero = false;
+        f.caja = null;
         f.e.objetivo = 0;
+        f.e.avanzar(dt, this.reducido);
         continue;
       }
       // El nombre cuelga bajo la base (como el precio en el borde de la balda); la pastilla, sobre lo más alto.
@@ -897,7 +917,7 @@ export class MotorNevera {
       const p = f.arriba
         ? c.pos.clone().addScaledVector(arriba, c.alto / 2 + (4 * d) / this.pxPorUnidad)
         : c.base.clone().addScaledVector(arriba, -(3 * d) / this.pxPorUnidad);
-      const nombre = f.e.estilo === "monton" ? `${c.nombre} (pastilla)` : f.e.estilo === "elemento" && !c.monton ? c.producto : c.nombre;
+      const nombre = f.e.estilo === "monton" ? `${c.monton ? c.nombre : nombreGrupo(c.producto)} (pastilla «${f.e.titulo}»)` : f.e.estilo === "elemento" && !c.monton ? c.producto : c.nombre;
       considerar(f.e, p, nombre, f, f.arriba);
     }
     candidatas.sort((a, b) => RANGO_ETIQUETA[b.e.estilo] - RANGO_ETIQUETA[a.e.estilo] || a.prof - b.prof);
@@ -978,10 +998,10 @@ export class MotorNevera {
 
   /** La pastilla de montón bajo el puntero, si la hay (se toca antes que las cosas). */
   private pastillaEn(x: number, y: number): string | null {
-    for (const [k, f] of this.flotantes) {
-      if (!k.startsWith("m:") || !f.caja || f.e.opacidad < 0.3) continue;
+    for (const f of this.flotantes.values()) {
+      if (!f.monton || !f.quiero || !f.caja || f.e.opacidad < 0.3) continue;
       const m = 4;
-      if (x >= f.caja.x0 - m && x <= f.caja.x1 + m && y >= f.caja.y0 - m && y <= f.caja.y1 + m) return k.slice(2);
+      if (x >= f.caja.x0 - m && x <= f.caja.x1 + m && y >= f.caja.y0 - m && y <= f.caja.y1 + m) return f.monton;
     }
     return null;
   }
@@ -1090,7 +1110,7 @@ export class MotorNevera {
   }
 
   private pastillaDe(clave: string) {
-    const f = this.flotantes.get(`m:${clave}`);
+    const f = [...this.flotantes.values()].find((x) => x.monton === clave && x.quiero);
     if (!f?.caja || f.e.opacidad < 0.3) return null;
     return { x: Math.round((f.caja.x0 + f.caja.x1) / 2), y: Math.round((f.caja.y0 + f.caja.y1) / 2) };
   }

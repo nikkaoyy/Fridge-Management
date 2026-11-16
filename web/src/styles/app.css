@@ -350,10 +350,32 @@ textarea:focus { border-color: var(--cyan); box-shadow: var(--glow); outline: no
 }
 .escena-lienzo { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
 .escena-lienzo.arrastrando { cursor: grabbing; }
-.leyenda-3d { list-style: none; margin: 0; padding: 0 2px; display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--ink-muted); font-size: 12px; }
-.leyenda-3d li { display: flex; align-items: center; gap: 6px; }
-.leyenda-3d .marca { border-radius: 50%; }
-.ayuda-3d { flex-basis: 100%; color: var(--ink-faint); }
+/* NEVERA-7: la leyenda, una sola línea bajo la escena (si no cabe, se desliza de lado en vez de partirse). */
+.leyenda-3d {
+  list-style: none; margin: 0; padding: 0 2px; display: flex; flex-wrap: nowrap; align-items: center; gap: 12px;
+  color: var(--ink-muted); font-size: 12px; white-space: nowrap; overflow-x: auto; scrollbar-width: none;
+}
+.leyenda-3d::-webkit-scrollbar { display: none; }
+.leyenda-3d li { display: flex; align-items: center; gap: 5px; flex: none; }
+.icono-forma { fill: color-mix(in srgb, var(--ink-muted) 18%, transparent); stroke: currentColor; stroke-width: 1.2; }
+.leyenda-sep { color: var(--ink-faint); margin-left: 4px; }
+.leyenda-3d .aro { display: inline-block; width: 11px; height: 11px; border-radius: 50%; border: 1.6px solid var(--ink-faint); }
+.leyenda-3d .tono-danger .aro { border-color: var(--danger); }
+.leyenda-3d .tono-warn .aro { border-color: var(--warn); }
+.leyenda-3d .tono-done .aro { border-color: color-mix(in srgb, var(--done) 60%, transparent); }
+.leyenda-3d .aro.late { animation: latido-aro 2.4s ease-in-out infinite; }
+@keyframes latido-aro { 50% { opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) { .leyenda-3d .aro.late { animation: none; } }
+.pastilla-leyenda {
+  font: 500 11px var(--font-display); color: var(--ink); background: var(--void-700); border: 1px solid var(--line-strong);
+  border-radius: 999px; padding: 0 6px; line-height: 16px;
+}
+.ayuda-3d { margin: 2px 2px 0; color: var(--ink-faint); font-size: 12px; }
+/* En un teléfono la leyenda sigue en una línea: las formas solo con su dibujo (el nombre va en title y aria-label). */
+@media (max-width: 560px) {
+  .leyenda-3d { gap: 9px; font-size: 11.5px; }
+  .leyenda-3d .largo { display: none; }
+}
 .escena-marco { position: relative; }
 /* El panel de una cosa: la misma tarjeta de la lista. En el móvil, una hoja fija abajo; en ancho, arriba a la derecha
    sobre la escena. Solo tapa lo que ocupa: el resto de la escena sigue tocándose. */

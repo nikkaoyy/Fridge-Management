@@ -60,7 +60,7 @@ export class Etiqueta {
   desplazamientoObjetivo = 0;
 
   constructor(
-    private readonly titulo: string,
+    readonly titulo: string, // NEVERA-7: público, para que la sonda diga qué pone una pastilla
     private readonly sub: string | null,
     readonly estilo: EstiloEtiqueta,
     private readonly color: string,

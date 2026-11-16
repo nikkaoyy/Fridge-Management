@@ -151,3 +151,64 @@ def test_una_instanced_mesh_por_forma_y_la_urgencia_en_un_aro():
     # el pulso, solo para lo que vence en ≤ 2 días (vencido o urgente del semáforo de la lista)
     assert re.search(r'if \(sem === "vencido" \|\| sem === "urgente"\) this\.senales\.latir\(', motor)
     assert "uLatido" in formas and "reducido ? 0 : 1" in formas  # sin pulso con movimiento reducido
+
+
+# ---------------------------------------------------------------- bloque 2: que se lean
+
+@con_node
+def test_los_montones_van_en_el_sitio_del_mas_urgente_y_se_despliegan():
+    """Más de MONTON_MAS_DE cosas del mismo grupo → un montón en el sitio de la más urgente; abierto, una por sitio
+    y juntas; los grupos pequeños no se tocan (manda la urgencia)."""
+    got = _node("""
+      const e = (id, producto, dias) => ({ id, producto, dias_para_vencer: dias, cantidad_inicial: 1, saldo: 1,
+        unidad_base: "u", vencimiento: null, abierto_en: null });
+      const lista = [e(1, "PAPA PASTUSA", 9), e(2, "PAPA CRIOLLA", 3), e(3, "LECHE ENTERA", 1), e(4, "PAPA SABANERA", 6),
+                     e(5, "PAPA LUD", 12), e(6, "YOGUR POMAR", 2), e(7, "YOGUR SUPERIOR", 8)];
+      const como = (x) => ({ forma: x.producto.startsWith("PAPA") ? "bolsa" : "botella", medidas: { ancho: 0.1, alto: 0.1, fondo: 0.1 } });
+      const plegado = colocar.agrupar(lista, como).map((u) => [u.id, u.ids, u.monton]);
+      const abierto = colocar.agrupar(lista, como, new Set(["papa|bolsa"])).map((u) => [u.id, u.desplegadaDe]);
+      console.log(JSON.stringify({ plegado, abierto, masDe: familias.MONTON_MAS_DE }));
+    """)
+    assert got["masDe"] == FAMILIAS["monton"]["masDe"] == 2
+    assert got["plegado"] == [[3, [3], False], [6, [6], False], [2, [2, 4, 1, 5], True], [7, [7], False]]
+    assert got["abierto"] == [[3, None], [6, None], [2, "papa|bolsa"], [4, "papa|bolsa"], [1, "papa|bolsa"],
+                              [5, "papa|bolsa"], [7, None]]
+
+
+@con_node
+def test_el_nombre_corto_de_la_etiqueta():
+    casos = {
+        "LECHE PLV ENT KLIM": "Leche en polvo",
+        "BANANO CORRIENTE": "Banano",
+        "SH ALMA DE FLORES 400ML": "Champú alma",
+        "HUEVO CAMPESINO AA X30": "Huevo campesino",
+        "ATUN VAN CAMPS": "Atún van",
+    }
+    got = _node(f"console.log(JSON.stringify({json.dumps(list(casos))}.map((p) => familias.nombreCorto(p))));")
+    assert got == list(casos.values())
+    assert all(len(n) <= FAMILIAS["nombreCorto"]["largoMax"] for n in got)
+
+
+def test_etiquetas_fijas_con_tope_y_solo_lo_elegido_en_el_movil():
+    """Una o dos por compartimento de lejos, tres por balda de cerca, en el teléfono ninguna fija; todas pasan por el
+    resolvedor de solapes de siempre y el nombre fijo es lo primero que cede."""
+    motor = _sin_comentarios(_leer("motor.ts"))
+    assert re.search(r"const NOMBRES_POR_COMPARTIMENTO = 2;", motor)
+    assert re.search(r"const NOMBRES_POR_BALDA = 3;", motor)
+    assert re.search(r"if \(!this\.tactil\) \{", motor)
+    assert "colocarEtiqueta(k.caja, puestas" in motor
+    etq = _leer("etiquetas.ts")
+    rangos = dict(re.findall(r"(\w+): ([\d.]+)", re.search(r"RANGO_ETIQUETA[^=]*= \{([^}]*)\}", etq).group(1)))
+    assert min(rangos, key=lambda k: float(rangos[k])) == "nombre" and max(rangos, key=lambda k: float(rangos[k])) == "elemento"
+
+
+def test_la_leyenda_en_una_linea_con_las_cinco_formas_sin_colores_nuevos():
+    jsx = open(os.path.join(WEB, "componentes", "Nevera3D.tsx"), encoding="utf-8").read()
+    assert 'className="leyenda-3d"' in jsx and "FORMAS.map" in jsx
+    for tono in ("tono-danger", "tono-warn", "tono-done"):
+        assert tono in jsx
+    css = open(os.path.join(WEB, "styles", "app.css"), encoding="utf-8").read()
+    bloque = css[css.index(".leyenda-3d {"):css.index(".escena-marco {")]
+    assert "flex-wrap: nowrap" in bloque and "white-space: nowrap" in bloque
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(", bloque)
+    assert "prefers-reduced-motion" in bloque  # el aro que late en la leyenda tampoco late con movimiento reducido
