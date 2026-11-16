@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 
 from . import __version__, auth, db, errores, pantalla
-from . import rutas_catalogo, rutas_elementos, rutas_fase2, rutas_importar, rutas_miembros
+from . import rutas_catalogo, rutas_elementos, rutas_fase2, rutas_importar, rutas_miembros, rutas_recetas
 
 log = logging.getLogger("nevera")
 _NO_DADO = object()
@@ -71,7 +71,7 @@ def crear_app(datos: str | None = None, token_admin=_NO_DADO) -> FastAPI:
                 "base": os.path.relpath(request.app.state.ruta_base, db.RAIZ)
                 if request.app.state.ruta_base.startswith(db.RAIZ + os.sep) else request.app.state.ruta_base}
 
-    for r in (rutas_catalogo, rutas_elementos, rutas_importar, rutas_miembros, rutas_fase2):
+    for r in (rutas_catalogo, rutas_elementos, rutas_importar, rutas_miembros, rutas_recetas, rutas_fase2):
         app.include_router(r.router)
     pantalla.instalar(app)  # la UI (PEDIDO-NEVERA-4): web/dist en /, /assets, /fonts; fuera del contrato
     return app

@@ -53,7 +53,12 @@ Por qué la consulta 2 necesita cinco y si es aceptable:
   inevitable porque la consulta pregunta por todos los elementos disponibles. Si algún día duele, lo primero es
   filtrar `disponible` al rango de vencimiento antes de agrupar, no desnormalizar.
 - `GET /recetas/sugeridas` del contrato se implementa con esta consulta tal cual (`PEDIDO-NEVERA-2`, fase F3 del
-  plan). `GET /elementos?por_vencer=` y `GET /vencimientos` con la consulta 1 o con `v_elemento`, que es la misma
+  plan). **Al implementarlo (PEDIDO-NEVERA-5)** se mantuvo su forma (versión vigente por `MAX(numero)` → ingrediente →
+  lo disponible, una sola consulta para todas las recetas) con cuatro cambios, dichos en `INFORME-NEVERA-5.md`: lo
+  disponible sale de `v_elemento` (hojas de D3, saldo > 0 y el vencimiento efectivo del abierto, «hoy» de Bogotá),
+  lo vencido no cuenta como disponible, el orden es por los días del ingrediente más urgente (no por el conteo
+  `por_vencer`) y salen todas las recetas que tienen al menos un ingrediente en casa, no solo las que tienen algo por
+  vencer. Está en `app/rutas_recetas.py` (`SQL_SUGERIDAS`). `GET /elementos?por_vencer=` y `GET /vencimientos` con la consulta 1 o con `v_elemento`, que es la misma
   consulta más el join a `compra` por `fecha_compra` (4 joins; el cuarto es una búsqueda por clave primaria y da un
   dato que el panel muestra).
 - Nota para D3: si Nico firma «el pack se explota al registrar», las dos consultas añaden

@@ -130,3 +130,25 @@ class MiembroEdicion(Modelo):
     rol: Literal["admin", "editor", "lector"] | None = None
     activo: bool | None = None
     renovar_token: bool = False
+
+
+# ---------------------------------------------------------------- recetas (PEDIDO-NEVERA-5)
+
+class IngredienteNuevo(Modelo):
+    producto_id: int
+    cantidad: Positivo
+    unidad: Nombre
+    opcional: bool = False
+    producto: str | None = None  # de lectura en el contrato: se acepta para poder devolver lo leído, y se ignora
+
+
+class RecetaVersionNueva(Modelo):
+    porciones: Annotated[int, Field(ge=1)] = 1
+    instrucciones: str | None = None
+    ingredientes: Annotated[list[IngredienteNuevo], Field(min_length=1)]
+
+
+class RecetaNueva(Modelo):
+    nombre: Nombre
+    nota: str | None = None
+    version: RecetaVersionNueva

@@ -60,7 +60,7 @@ _MOTIVOS = {"missing": "falta el campo", "extra_forbidden": "campo desconocido e
             "int_from_float": "se esperaba un entero", "float_parsing": "se esperaba un número",
             "float_type": "se esperaba un número", "bool_parsing": "se esperaba true o false",
             "bool_type": "se esperaba true o false", "string_type": "se esperaba texto",
-            "list_type": "se esperaba una lista"}
+            "list_type": "se esperaba una lista", "too_short": "la lista no puede estar vacía"}
 
 
 def _motivo(x: dict) -> str:

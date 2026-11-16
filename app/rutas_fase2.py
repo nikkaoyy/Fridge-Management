@@ -1,4 +1,6 @@
-"""Fase 2 del contrato (x-estado: declarado): existe, exige token y rol, y responde 501."""
+"""Fase 2 del contrato (x-estado: declarado): existe, exige token y rol, y responde 501.
+
+Las recetas salieron de aquí en PEDIDO-NEVERA-5 (app/rutas_recetas.py); quedan proveedores, precios y planes."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
@@ -11,11 +13,8 @@ router = APIRouter(dependencies=[Depends(autorizar)])
 DECLARADAS = [
     ("GET", "/proveedores"), ("POST", "/proveedores"),
     ("GET", "/precios"), ("POST", "/precios"),
-    ("GET", "/recetas"), ("POST", "/recetas"),
-    ("GET", "/recetas/sugeridas"),
-    ("GET", "/recetas/{id}"),
-    ("POST", "/recetas/{id}/versiones"),
     ("GET", "/planes"), ("POST", "/planes"),
+    ("POST", "/recetas/{id}/cocinar"),  # PEDIDO-NEVERA-5: declarado en el bloque 1, implementado en el bloque 2
 ]
 
 

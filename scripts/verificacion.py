@@ -431,7 +431,7 @@ if yaml:
     ok(not rotos, f"{len(refs)} `$ref` y todos resuelven" + (f"; rotos: {rotos}" if rotos else ""))
     ops = [(p, m, o) for p, it in spec["paths"].items() for m, o in it.items() if m in ("get", "post", "put", "patch", "delete")]
     decl = [o for _, _, o in ops if o.get("x-estado") == "declarado"]
-    print(f"- {len(spec['paths'])} rutas, {len(ops)} operaciones: {len(ops) - len(decl)} de fase 1 y {len(decl)} declaradas (`x-estado: declarado`), {len(spec['components']['schemas'])} esquemas")
+    print(f"- {len(spec['paths'])} rutas, {len(ops)} operaciones: {len(ops) - len(decl)} implementadas y {len(decl)} declaradas (`x-estado: declarado`), {len(spec['components']['schemas'])} esquemas")
     ok(all("operationId" in o for _, _, o in ops) and len({o["operationId"] for _, _, o in ops}) == len(ops), "todas las operaciones tienen operationId único")
     ok(all(any(r.startswith("4") or r.startswith("5") for r in o.get("responses", {})) for _, m, o in ops if m != "get" or "{" in _),
        "toda operación que puede fallar declara al menos una respuesta 4xx/5xx")

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Catálogo de nevera
-  version: 0.2.0
+  version: 0.3.0
   description: |
     Contrato de la API del Catálogo de nevera (PEDIDO-NEVERA-0, bloque 2), corregido en PEDIDO-NEVERA-2 al implementar
     la fase 1: miembros con rol, atribución, fotos del alta y las decisiones D1-D5 firmadas.
@@ -36,8 +36,12 @@ info:
     - **Fase 1 (implementada en PEDIDO-NEVERA-2)**: salud, indicadores, catálogo (categorías, unidades, ubicaciones),
       productos y su vida útil, presentaciones, elementos con alta rápida, foto y filtro `por_vencer`, resumen de
       vencimientos, movimientos (merma, consumo, ajuste), importador y miembros.
-    - **Fase 2 (declarada, no implementada)**: proveedores, precios por proveedor, recetas con versiones, planes de
-      comida y `GET /recetas/sugeridas`. Exigen token y rol, y responden `501`. Marcadas con `x-estado: declarado`.
+    - **Recetas (implementadas en PEDIDO-NEVERA-5, fase F3 del plan)**: recetas con versiones, `GET /recetas/sugeridas`
+      y `POST /recetas/{id}/cocinar`, que es nuevo en este pedido (el contrato no lo tenía). Las cantidades de los
+      ingredientes se reciben con `cantidad` + `unidad` y se guardan y devuelven en la unidad base del producto, como
+      las de elementos y movimientos.
+    - **Fase 2 (declarada, no implementada)**: proveedores, precios por proveedor y planes de comida. Exigen token y
+      rol, y responden `501`. Marcadas con `x-estado: declarado`.
 servers:
   - url: http://127.0.0.1:8451
     description: Local (el servicio escucha en 0.0.0.0:8451, red de la casa, sin TLS)
@@ -56,6 +60,8 @@ tags:
   - name: Importador
   - name: Miembros
     description: Personas y dispositivos del hogar con su rol.
+  - name: Recetas
+    description: Recetas con versiones, qué cocinar con lo que se vence y cocinar (descuenta lo usado).
   - name: Fase 2 (declarada)
     description: Declarado y documentado; responde 501 hasta que se implemente.
 
@@ -73,7 +79,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Salud' }
-              example: { ok: true, version: "0.2.0", esquema: 2, base: "data/nevera.db" }
+              example: { ok: true, version: "0.3.0", esquema: 2, base: "data/nevera.db" }
 
   /indicadores:
     get:
@@ -888,12 +894,16 @@ paths:
               schema: { $ref: '#/components/schemas/Precio' }
         '501': { $ref: '#/components/responses/NoImplementado' }
 
+  # --------------------------------------------------------------------
+  # Recetas (PEDIDO-NEVERA-5): implementadas.
+  # --------------------------------------------------------------------
+
   /recetas:
     get:
-      tags: [Fase 2 (declarada)]
+      tags: [Recetas]
       summary: Listar recetas con su versión vigente
+      description: Ordenadas por nombre. La versión vigente es la de número más alto.
       operationId: listarRecetas
-      x-estado: declarado
       responses:
         '401': { $ref: '#/components/responses/NoAutenticado' }
         '200':
@@ -901,12 +911,15 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/Receta' } }
-        '501': { $ref: '#/components/responses/NoImplementado' }
     post:
-      tags: [Fase 2 (declarada)]
+      tags: [Recetas]
       summary: Crear receta (versión 1)
+      description: |
+        Crea la receta y su versión 1 en una transacción. Cada ingrediente llega con `cantidad` + `unidad` (código del
+        catálogo `GET /unidades`, de la magnitud del producto) y se guarda en la unidad base del producto: «1 kg» de
+        arroz queda como 1000 g. Una unidad que no existe («cucharada») o de otra magnitud es 400 con el motivo; no se
+        convierte a ojo. Un producto no puede ir dos veces en la misma versión.
       operationId: crearReceta
-      x-estado: declarado
       requestBody:
         required: true
         content:
@@ -915,62 +928,74 @@ paths:
       responses:
         '401': { $ref: '#/components/responses/NoAutenticado' }
         '403': { $ref: '#/components/responses/Prohibido' }
+        '400': { $ref: '#/components/responses/Invalido' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '409': { $ref: '#/components/responses/Conflicto' }
         '201':
           description: Creada
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Receta' }
-        '501': { $ref: '#/components/responses/NoImplementado' }
 
   /recetas/sugeridas:
     get:
-      tags: [Fase 2 (declarada)]
-      summary: Recetas que usan lo que está por vencer
+      tags: [Recetas]
+      summary: Qué cocinar con lo que se vence
       description: |
-        Para cada receta (versión vigente), cuántos de sus ingredientes están disponibles y cuántos vencen en los
-        próximos `dias`. Ordenadas por ingredientes por vencer descendente. Es la consulta 2 de docs/verificacion.md.
+        Cada receta (versión vigente) que tiene al menos un ingrediente en casa, con lo que cubre, lo que le falta y
+        cuántos días le quedan al ingrediente más urgente. Es la consulta 2 de docs/verificacion.md (receta → versión
+        vigente → ingrediente → elemento disponible), con lo disponible tomado de `v_elemento`: solo hojas (D3), saldo
+        mayor que 0, vencimiento efectivo (el de un abierto se acorta) y **sin lo vencido**, que no se propone para
+        cocinar.
+
+        Orden, sin puntuaciones: primero por `dias_mas_urgente` ascendente (las recetas cuyo único disponible no tiene
+        fecha van al final); a igual urgencia, más ingredientes por vencer primero, luego menos ingredientes faltantes,
+        luego el nombre. `dias` solo decide qué cuenta como «por vencer» (de hoy a hoy + `dias`).
       operationId: recetasSugeridas
-      x-estado: declarado
       parameters:
         - name: dias
           in: query
           schema: { type: integer, minimum: 0, default: 3 }
       responses:
         '401': { $ref: '#/components/responses/NoAutenticado' }
+        '400': { $ref: '#/components/responses/Invalido' }
         '200':
           description: Lista
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/RecetaSugerida' } }
-        '501': { $ref: '#/components/responses/NoImplementado' }
 
   /recetas/{id}:
     parameters:
       - $ref: '#/components/parameters/Id'
     get:
-      tags: [Fase 2 (declarada)]
+      tags: [Recetas]
       summary: Ver receta con sus versiones
+      description: |
+        `version_vigente` es la de número más alto; `versiones` las trae todas, de la 1 a la vigente, tal como se
+        guardaron. No hay `?version=`: una versión concreta se lee de `versiones`.
       operationId: verReceta
-      x-estado: declarado
       responses:
         '401': { $ref: '#/components/responses/NoAutenticado' }
+        '400': { $ref: '#/components/responses/Invalido' }
         '200':
           description: Receta
           content:
             application/json:
               schema: { $ref: '#/components/schemas/RecetaDetalle' }
         '404': { $ref: '#/components/responses/NoEncontrado' }
-        '501': { $ref: '#/components/responses/NoImplementado' }
 
   /recetas/{id}/versiones:
     parameters:
       - $ref: '#/components/parameters/Id'
     post:
-      tags: [Fase 2 (declarada)]
+      tags: [Recetas]
       summary: Nueva versión de la receta
-      description: Editar una receta es crear la versión N+1; las anteriores no cambian (los planes viejos las siguen apuntando).
+      description: |
+        Editar una receta es crear la versión N+1; las anteriores no cambian (los planes viejos las siguen apuntando).
+        Mismas reglas de unidades que al crear. El nombre y la nota son de la receta, no de la versión: no se editan
+        aquí.
       operationId: crearVersionReceta
-      x-estado: declarado
       requestBody:
         required: true
         content:
@@ -979,13 +1004,52 @@ paths:
       responses:
         '401': { $ref: '#/components/responses/NoAutenticado' }
         '403': { $ref: '#/components/responses/Prohibido' }
+        '400': { $ref: '#/components/responses/Invalido' }
         '201':
           description: Versión creada
           content:
             application/json:
               schema: { $ref: '#/components/schemas/RecetaVersion' }
         '404': { $ref: '#/components/responses/NoEncontrado' }
+
+  /recetas/{id}/cocinar:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Recetas]
+      summary: Cocinar la receta (descuenta lo usado)
+      description: |
+        Nuevo en PEDIDO-NEVERA-5. La receta no consume sola: el usuario dice qué elementos usó y cuánto de cada uno, y
+        el servidor registra **un movimiento de consumo por cada uno**, a nombre de quien cocina y con
+        `motivo: "receta <nombre>"`, todos en una transacción. Cada elemento tiene que ser una hoja (D3) de un producto
+        de la versión vigente y no puede ir dos veces. Si a alguno no le alcanza el saldo, responde 409
+        `saldo_insuficiente` con `detalle.faltan` (qué elemento, cuánto se pide y cuánto hay) y no escribe nada.
+      operationId: cocinarReceta
+      x-estado: declarado
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Cocinar' }
+      responses:
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+        '400': { $ref: '#/components/responses/Invalido' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '409':
+          description: No alcanza el saldo de algún elemento, o es un pack; no se escribió nada.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: { codigo: "saldo_insuficiente", mensaje: "no alcanza: arroz (elemento 12) tiene 200 g y se piden 500 g", detalle: { faltan: [ { elemento_id: 12, producto: "arroz", pide: 500, hay: 200, unidad: "g" } ] } } }
+        '201':
+          description: Cocinada; los movimientos que se registraron
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cocinado' }
         '501': { $ref: '#/components/responses/NoImplementado' }
+
+  # Fase 2: declarada, no implementada (sigue).
 
   /planes:
     get:
@@ -1472,11 +1536,14 @@ components:
     Ingrediente:
       type: object
       required: [producto_id, cantidad, unidad]
+      description: |
+        Al escribir, `cantidad` va en `unidad` (código de `GET /unidades`, de la magnitud del producto). Al leer, las dos
+        vienen en la unidad base del producto (`g`, `ml`, `u`): «1 kg» se guardó y se devuelve como 1000 g.
       properties:
         producto_id: { type: integer }
         producto: { type: string, description: Nombre (lectura). }
         cantidad: { type: number, minimum: 0, exclusiveMinimum: true }
-        unidad: { type: string, description: Código; de la magnitud del producto. }
+        unidad: { type: string, description: "Código; de la magnitud del producto. Al leer, la unidad base." }
         opcional: { type: boolean, default: false }
     RecetaVersion:
       type: object
@@ -1520,14 +1587,61 @@ components:
             versiones: { type: array, items: { $ref: '#/components/schemas/RecetaVersion' } }
     RecetaSugerida:
       type: object
-      required: [receta_id, nombre, receta_version_id, ingredientes, disponibles, por_vencer]
+      required: [receta_id, nombre, receta_version_id, ingredientes, disponibles, por_vencer, dias_mas_urgente, cubre, faltan]
       properties:
         receta_id: { type: integer }
         nombre: { type: string }
         receta_version_id: { type: integer }
+        porciones: { type: integer }
         ingredientes: { type: integer, description: Ingredientes no opcionales de la versión vigente. }
-        disponibles: { type: integer, description: Cuántos de ellos tienen algún elemento con saldo. }
-        por_vencer: { type: integer, description: Cuántos tienen un elemento que vence en `dias`. }
+        disponibles: { type: integer, description: "Cuántos de ellos tienen algún elemento disponible (hoja, saldo > 0, sin vencer)." }
+        por_vencer: { type: integer, description: Cuántos tienen un elemento disponible que vence entre hoy y hoy + `dias`. }
+        dias_mas_urgente:
+          type: integer
+          nullable: true
+          description: Días que le quedan al ingrediente disponible que vence antes (0 = hoy). Null si ninguno de los que hay tiene fecha.
+        cubre: { type: array, items: { $ref: '#/components/schemas/IngredienteSugerido' }, description: "Los ingredientes que hay en casa, del más urgente al que menos." }
+        faltan: { type: array, items: { $ref: '#/components/schemas/IngredienteSugerido' }, description: Los que no hay (ningún elemento disponible). }
+    IngredienteSugerido:
+      type: object
+      required: [producto_id, producto, cantidad, unidad, opcional, saldo, dias_para_vencer, por_vencer, alcanza]
+      properties:
+        producto_id: { type: integer }
+        producto: { type: string }
+        cantidad: { type: number, description: "Lo que pide la receta, en la unidad base." }
+        unidad: { type: string, description: Unidad base del producto. }
+        opcional: { type: boolean }
+        saldo: { type: number, description: "Lo que hay disponible de ese producto, sumado, en la unidad base (0 si falta)." }
+        dias_para_vencer: { type: integer, nullable: true, description: Del elemento disponible que vence antes; null si falta o si ninguno tiene fecha. }
+        por_vencer: { type: boolean, description: Vence entre hoy y hoy + `dias` («se me vence»). }
+        alcanza: { type: boolean, description: "`saldo` >= `cantidad`." }
+    Cocinar:
+      type: object
+      required: [consumos]
+      properties:
+        consumos:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ConsumoReceta' }
+          description: Lo que el usuario confirmó que usó. Un movimiento de consumo por cada línea.
+        fecha:
+          allOf: [ { $ref: '#/components/schemas/Fecha' } ]
+          description: Por defecto hoy.
+    ConsumoReceta:
+      type: object
+      required: [elemento_id, cantidad]
+      properties:
+        elemento_id: { type: integer }
+        cantidad: { type: number, minimum: 0, exclusiveMinimum: true }
+        unidad: { type: string, description: Código; por defecto la base del producto. }
+    Cocinado:
+      type: object
+      required: [receta_id, receta_version_id, motivo, movimientos]
+      properties:
+        receta_id: { type: integer }
+        receta_version_id: { type: integer, description: La versión vigente al cocinar. }
+        motivo: { type: string, description: "«receta <nombre>», el mismo en cada movimiento." }
+        movimientos: { type: array, items: { $ref: '#/components/schemas/Movimiento' } }
     PlanComida:
       type: object
       required: [id, fecha, receta_version_id, porciones]
