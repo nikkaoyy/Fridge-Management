@@ -376,7 +376,11 @@ export class MotorNevera {
             ? { theta: 0.12, phi: 1.12 }
             : { theta: 0.12, phi: 1.22 };
     const lado = Math.max(tam.x, tam.z * 0.8);
-    const radio = (this.distanciaPara(lado * 0.62, tam.y * 0.6) + Math.min(tam.z, 0.6) / 2) * (nivel ? 1.3 : 1);
+    const prof = Math.min(tam.z, 0.6) / 2;
+    let radio = (this.distanciaPara(lado * 0.62, tam.y * 0.6) + prof) * (nivel ? 1.3 : 1);
+    // En vertical (teléfono) manda el ancho: el margen de arriba sobraría y dejaría las cosas por debajo de
+    // UMBRAL_CUERPO_PX (solo halo). Ahí el nivel llena ~90 % del ancho.
+    if (nivel && this.ancho < this.alto) radio = Math.min(radio, this.distanciaPara(lado * 0.5, 0) + prof * 0.5);
     this.rig.volarA({ ...vista, radio, objetivo: centro });
   }
 

@@ -14,6 +14,8 @@ import { capacidad, escenaActual } from "../escena/capacidad";
 
 // PEDIDO-NEVERA-6: la nevera en 3D se carga aparte; la lista no descarga three.
 const Nevera3D = lazy(() => import("./Nevera3D"));
+const CLAVE_VISTA = "nevera.vista"; //       "lista" | "nevera"
+const CLAVE_AVISO_3D = "nevera.aviso3d"; //  ya se dijo una vez por qué aquí no hay 3D
 
 interface Props {
   yo: Miembro;
@@ -68,8 +70,11 @@ export default function Tablero({ yo, alSalir }: Props) {
   const [plegadas, setPlegadas] = useState<Set<number>>(new Set());
   const [vista, setVista] = useState<"tablero" | "alta">("tablero");
   const [pestana, setPestana] = useState<"nevera" | "recetas">("nevera"); // PEDIDO-NEVERA-5: se añade, no se rehace
+  // PEDIDO-NEVERA-6: la segunda vista. La elección se recuerda en este dispositivo; si aquí no se puede dibujar en
+  // 3D, se abre la lista y se dice una sola vez (ver el efecto de abajo).
   const cap = useMemo(capacidad, []);
-  const [vista3d, setVista3d] = useState<"lista" | "nevera">("lista"); // PEDIDO-NEVERA-6: la segunda vista
+  const [vista3d, setVista3d] = useState<"lista" | "nevera">(() =>
+    localStorage.getItem(CLAVE_VISTA) === "nevera" && !cap.impedimento ? "nevera" : "lista");
   const [ubicAlta, setUbicAlta] = useState<number | null>(null);
   const [abierta, setAbierta] = useState<{ id: number; accion: Accion } | null>(null);
   const [aviso, setAviso] = useState<{ texto: string; malo: boolean } | null>(null);
@@ -127,6 +132,14 @@ export default function Tablero({ yo, alSalir }: Props) {
     document.addEventListener("visibilitychange", alVolverVisible);
     return () => document.removeEventListener("visibilitychange", alVolverVisible);
   }, [vista, abierta, refrescar]);
+
+  // Se pidió la nevera (guardado de otra vez) y aquí no se puede: se abre la lista y se dice, una sola vez.
+  useEffect(() => {
+    if (!datos || !cap.impedimento || localStorage.getItem(CLAVE_VISTA) !== "nevera") return;
+    if (localStorage.getItem(CLAVE_AVISO_3D)) return;
+    localStorage.setItem(CLAVE_AVISO_3D, "1");
+    avisar(cap.impedimento);
+  }, [datos, cap, avisar]);
 
   useEffect(() => {
     if (!salirArmado) return;
@@ -208,9 +221,10 @@ export default function Tablero({ yo, alSalir }: Props) {
 
   function elegirVista(v: "lista" | "nevera") {
     if (v === "nevera" && cap.impedimento) {
-      avisar(cap.impedimento);
+      avisar(cap.impedimento); // lo pidió con un toque: se le contesta, aunque ya se le hubiera dicho
       v = "lista";
     }
+    localStorage.setItem(CLAVE_VISTA, v);
     setVista3d(v);
     setPestana("nevera");
     setAbierta(null);
@@ -218,8 +232,13 @@ export default function Tablero({ yo, alSalir }: Props) {
   }
 
   function alFallar3d(motivo: string) {
+    // WebGL dijo que sí al preguntar pero falló al crear la escena o se perdió el contexto: lista, y se dice una vez.
+    // La elección guardada no se toca: si fue algo pasajero, la próxima vez vuelve a intentarlo.
     setVista3d("lista");
-    avisar(`La nevera en 3D no se pudo dibujar (${motivo}): sigue la lista.`, true);
+    if (!localStorage.getItem(CLAVE_AVISO_3D)) {
+      localStorage.setItem(CLAVE_AVISO_3D, "1");
+      avisar(`La nevera en 3D no se pudo dibujar aquí (${motivo}): se abre la lista.`);
+    }
   }
 
   function plegar(id: number) {
@@ -248,6 +267,7 @@ export default function Tablero({ yo, alSalir }: Props) {
       <div className="interruptor" role="group" aria-label="Vista">
         {(["lista", "nevera"] as const).map((v) => (
           <button key={v} type="button" id={`vista-${v}`} aria-pressed={pestana === "nevera" && vista3d === v}
+                  aria-disabled={v === "nevera" && !!cap.impedimento} title={v === "nevera" ? cap.impedimento ?? undefined : undefined}
                   onClick={() => elegirVista(v)}>
             {v === "lista" ? "Lista" : "Nevera"}
           </button>
@@ -344,6 +364,12 @@ export default function Tablero({ yo, alSalir }: Props) {
             ligeroAuto={cap.ligero}
             motivoAuto={cap.motivo}
             alFallar={alFallar3d}
+            hoy={datos.hoy}
+            puede={puede}
+            nombreUbic={nombreUbic}
+            abierta={abierta}
+            alAbrir={(id, a) => setAbierta(a ? { id, accion: a } : null)}
+            alEjecutar={ejecutar}
           />
         </Suspense>
         {avisoFlotante}

@@ -3,6 +3,7 @@
 // sus toques.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cifras, plural, type Ubicaciones } from "../logica";
+import Tarjeta, { type Accion } from "./Tarjeta";
 import type { Categoria, Elemento } from "../tipos";
 import { registrarEscena } from "../escena/capacidad";
 import { MotorNevera } from "../escena/motor";
@@ -15,17 +16,29 @@ interface Props {
   ligeroAuto: boolean;
   motivoAuto: string;
   alFallar: (motivo: string) => void;
+  /** Lo mismo que recibe cada tarjeta de la lista: el panel de una cosa es esa misma tarjeta, con sus acciones. */
+  hoy: string;
+  puede: boolean;
+  nombreUbic: (id: number) => string;
+  abierta: { id: number; accion: Accion } | null;
+  alAbrir: (id: number, a: Accion | null) => void;
+  alEjecutar: (e: Elemento, a: Accion, valor?: string) => Promise<void>;
 }
 
 const CLAVE_LIGERO = "nevera.ligero";
 
-export default function Nevera3D({ elementos, ubic, categorias, ligeroAuto, motivoAuto, alFallar }: Props) {
+export default function Nevera3D(p: Props) {
+  const { elementos, ubic, categorias, ligeroAuto, motivoAuto, alFallar } = p;
   const caja = useRef<HTMLDivElement>(null);
   const motor = useRef<MotorNevera | null>(null);
   const elegidoAMano = localStorage.getItem(CLAVE_LIGERO);
   const [ligero, setLigero] = useState(elegidoAMano === null ? ligeroAuto : elegidoAMano === "1");
   const fallar = useRef(alFallar);
   fallar.current = alFallar;
+  const [sel, setSel] = useState<number | null>(null);
+  const alAbrir = useRef(p.alAbrir);
+  alAbrir.current = p.alAbrir;
+  const elegida = sel === null ? undefined : elementos.find((e) => e.id === sel);
 
   const catMap = useMemo(() => new Map(categorias.map((c) => [c.id, c.nombre])), [categorias]);
   const c = useMemo(() => cifras(elementos), [elementos]);
@@ -40,7 +53,10 @@ export default function Nevera3D({ elementos, ubic, categorias, ligeroAuto, moti
         ligero,
         motivoLigero: elegidoAMano === null ? motivoAuto : "elegido a mano",
         reducido,
-        alElegir: () => {},
+        alElegir: (id) => {
+          setSel(id);
+          if (id !== null) alAbrir.current(id, null);
+        },
         alFallar: (motivo) => fallar.current(motivo),
       });
     } catch (e) {
@@ -60,6 +76,21 @@ export default function Nevera3D({ elementos, ubic, categorias, ligeroAuto, moti
   useEffect(() => {
     motor.current?.actualizar({ elementos, ubic, categorias: catMap });
   }, [elementos, ubic, catMap]);
+
+  // Lo que se acabó o se botó ya no está: su panel se cierra solo. El aro de la escena sigue a la selección.
+  useEffect(() => {
+    if (sel !== null && !elegida) setSel(null);
+    motor.current?.seleccionar(elegida ? elegida.id : null);
+  }, [sel, elegida]);
+
+  useEffect(() => {
+    if (sel === null) return;
+    const alTeclear = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape" && !p.abierta) setSel(null);
+    };
+    window.addEventListener("keydown", alTeclear);
+    return () => window.removeEventListener("keydown", alTeclear);
+  }, [sel, p.abierta]);
 
   function cambiarLigero() {
     const l = !ligero;
@@ -85,12 +116,35 @@ export default function Nevera3D({ elementos, ubic, categorias, ligeroAuto, moti
           Ligero
         </button>
       </div>
-      <div className="escena" ref={caja} />
+      <div className="escena-marco">
+        <div className="escena" ref={caja} />
+        {elegida && (
+          <aside className="panel-3d" aria-label={`${elegida.producto}: acciones`}>
+            <button type="button" id="cerrar-panel" className="boton-texto cerrar-panel" onClick={() => setSel(null)}>
+              Cerrar
+            </button>
+            <ul className="tarjetas">
+              <Tarjeta
+                e={elegida}
+                ubicacion={p.nombreUbic(elegida.ubicacion_id)}
+                hoy={p.hoy}
+                puede={p.puede}
+                abierta={p.abierta && p.abierta.id === elegida.id ? p.abierta.accion : null}
+                alAbrir={(a) => p.alAbrir(elegida.id, a)}
+                alEjecutar={p.alEjecutar}
+              />
+            </ul>
+          </aside>
+        )}
+      </div>
       <ul className="leyenda-3d" aria-label="Colores">
         <li className="tono-danger"><i className="marca" aria-hidden="true" />vencido o ≤ 2 días</li>
         <li className="tono-warn"><i className="marca" aria-hidden="true" />≤ 7 días</li>
         <li className="tono-done"><i className="marca" aria-hidden="true" />más de 7</li>
-        <li className="ayuda-3d">Arrastra para girar, pellizca o usa la rueda para acercar, toca un compartimento para verlo de cerca.</li>
+        <li className="ayuda-3d">
+          Arrastra para girar, pellizca o usa la rueda para acercar. Toca una balda para verla de cerca y una cosa para
+          sus acciones.
+        </li>
       </ul>
     </section>
   );
