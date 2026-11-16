@@ -15,8 +15,6 @@ export interface Compartimento {
   /** Caja que lo envuelve (tocar dentro encuadra el compartimento) y punto del que cuelga su rótulo. */
   caja: THREE.Box3;
   ancla: THREE.Vector3;
-  /** Radio máximo de una cosa aquí. */
-  radioMax: number;
   /** El hueco de cada superficie (de ella a la de arriba), en su orden: tocar dentro encuadra solo ese nivel. */
   zonas: THREE.Box3[];
 }
@@ -36,7 +34,10 @@ export const DESPENSA = { ancho: 0.78, alto: 1.3, fondo: 0.42, pared: 0.03, x: 0
 const BALDAS_Y = [1.16, 0.74, 0.34]; // de arriba abajo; la de abajo es la tapa del cajón
 const CAJON = { alto: 0.22, salida: 0.16 };
 const PUERTA = { grosor: 0.05, estantes: [1.3, 0.86, 0.42], fondoEstante: 0.1 };
-const EXTRA = { ancho: 0.5, alto: 0.14, fondo: 0.4, separacion: 0.14 };
+// NEVERA-7: las bandejas de las raíces extra (frutero, congelador…) crecen con lo que llevan: hasta 5 cosas, una
+// bandeja estrecha; hasta 10, más ancha; con más, dos pisos (como un frutero de dos alturas).
+const EXTRA = { fondo: 0.44, alto: 0.07, separacion: 0.14, piso: 0.32, techo: 0.66 };
+export const medidaExtra = (n: number) => ({ ancho: n > 10 ? 0.82 : n > 5 ? 0.6 : 0.46, pisos: n > 10 ? 2 : 1 });
 
 class Constructor {
   readonly opacas: THREE.BufferGeometry[] = [];
@@ -63,7 +64,7 @@ function matrizSuperficie(x: number, y: number, z: number, giroY = 0, padre: THR
 }
 
 /** Construye el mueble con un hueco para cada raíz extra que tenga cosas (congelador, frutero…), a la derecha. */
-export function construirMueble(extras: { id: number; nombre: string }[]): Mueble {
+export function construirMueble(extras: { id: number; nombre: string; n: number }[]): Mueble {
   const b = new Constructor();
   const compartimentos: Compartimento[] = [];
   const N = NEVERA;
@@ -87,10 +88,12 @@ export function construirMueble(extras: { id: number; nombre: string }[]): Muebl
   compartimentos.push({
     clave: "nevera",
     nombre: "nevera",
-    superficies: BALDAS_Y.map((y) => ({ sup: supBalda, matriz: matrizSuperficie(N.x, y + 0.008, zBalda) })),
+    superficies: BALDAS_Y.map((y, i) => ({
+      sup: { ...supBalda, alto: (i === 0 ? N.alto - t : BALDAS_Y[i - 1]) - y - 0.008 },
+      matriz: matrizSuperficie(N.x, y + 0.008, zBalda),
+    })),
     caja: new THREE.Box3(V(x0, BALDAS_Y[2], z0), V(x0 + N.ancho, N.alto, N.fondo / 2)),
     ancla: V(N.x, N.alto + 0.2, 0),
-    radioMax: 0.045,
     zonas: BALDAS_Y.map((y, i) => new THREE.Box3(V(x0, y, z0), V(x0 + N.ancho, i === 0 ? N.alto : BALDAS_Y[i - 1], N.fondo / 2))),
   });
 
@@ -105,14 +108,13 @@ export function construirMueble(extras: { id: number; nombre: string }[]): Muebl
   b.caja(0.012, CAJON.alto, fondoCajon, V(xc + anchoCajon - 0.012, yc, zc), null);
   b.caja(anchoCajon, CAJON.alto, 0.012, V(xc, yc, zc), null);
   b.caja(anchoCajon, CAJON.alto, 0.014, V(xc, yc, zc + fondoCajon - 0.014), null, true);
-  const supCajon: Superficie = { ancho: anchoCajon - 0.05, fondo: fondoCajon - 0.06 };
+  const supCajon: Superficie = { ancho: anchoCajon - 0.05, fondo: fondoCajon - 0.06, alto: BALDAS_Y[2] - yc - 0.03 };
   compartimentos.push({
     clave: "cajon",
     nombre: "cajón de verduras",
     superficies: [{ sup: supCajon, matriz: matrizSuperficie(N.x, yc + 0.012, zc + fondoCajon / 2) }],
     caja: new THREE.Box3(V(xc, 0, zc), V(xc + anchoCajon, BALDAS_Y[2], zc + fondoCajon)),
     ancla: V(N.x, -0.02, zc + fondoCajon),
-    radioMax: 0.05,
     zonas: [],
   });
 
@@ -133,10 +135,9 @@ export function construirMueble(extras: { id: number; nombre: string }[]): Muebl
     clave: "puerta",
     nombre: "puerta de la nevera",
     // El marco de la superficie gira 180°: su frente (+z) es el borde del estante, lejos de la puerta.
-    superficies: PUERTA.estantes.map((y) => ({ sup: supEstante, matriz: matrizSuperficie(N.ancho / 2, y + 0.01, -PUERTA.fondoEstante / 2, Math.PI, mPuerta) })),
+    superficies: PUERTA.estantes.map((y, i) => ({ sup: { ...supEstante, alto: (i === 0 ? N.alto : PUERTA.estantes[i - 1]) - y - 0.02 }, matriz: matrizSuperficie(N.ancho / 2, y + 0.01, -PUERTA.fondoEstante / 2, Math.PI, mPuerta) })),
     caja: cajaPuerta,
     ancla: V(N.ancho * 0.3, N.alto + 0.2, -0.05).applyMatrix4(mPuerta),
-    radioMax: 0.04,
     zonas: [],
   });
 
@@ -157,32 +158,52 @@ export function construirMueble(extras: { id: number; nombre: string }[]): Muebl
   compartimentos.push({
     clave: "despensa",
     nombre: "despensa",
-    superficies: [...nivelesDespensa.map((y) => y + 0.02), dt].map((y) => ({ sup: supDespensa, matriz: matrizSuperficie(D.x, y, zDespensa) })),
+    superficies: [...nivelesDespensa.map((y) => y + 0.02), dt].map((y, i) => ({
+      sup: { ...supDespensa, alto: (i === 0 ? D.alto - dt : nivelesDespensa[i - 1]) - y },
+      matriz: matrizSuperficie(D.x, y, zDespensa),
+    })),
     caja: new THREE.Box3(V(dx0, 0, dz0), V(dx0 + D.ancho, D.alto, D.fondo / 2)),
     ancla: V(D.x, D.alto + 0.2, 0),
-    radioMax: 0.045,
     zonas: [D.alto - dt, ...nivelesDespensa].map((techo, i, l) =>
       new THREE.Box3(V(dx0, i + 1 < l.length ? l[i + 1] : 0, dz0), V(dx0 + D.ancho, techo, D.fondo / 2))),
   });
 
-  // Raíces extra con cosas: una bandeja abierta cada una, a la derecha de la despensa, en el suelo.
-  extras.forEach((ex, i) => {
-    const E = EXTRA;
-    const ex0 = D.x + D.ancho / 2 + E.separacion + i * (E.ancho + E.separacion);
+  // Raíces extra con cosas: una bandeja abierta cada una, a la derecha de la despensa, en el suelo; con muchas cosas,
+  // dos pisos (el de arriba, una tabla sobre cuatro postes). NEVERA-7: el tamaño sale de cuántas lleva (medidaExtra).
+  let xSig = D.x + D.ancho / 2 + EXTRA.separacion;
+  extras.forEach((ex) => {
+    const E = { ...EXTRA, ...medidaExtra(ex.n) };
+    const ex0 = xSig;
+    xSig += E.ancho + E.separacion;
     const ez0 = -E.fondo / 2;
-    b.caja(E.ancho, 0.015, E.fondo, V(ex0, 0, ez0), null);
-    b.caja(E.ancho, E.alto, 0.012, V(ex0, 0, ez0), null);
-    b.caja(0.012, E.alto, E.fondo, V(ex0, 0, ez0), null);
-    b.caja(0.012, E.alto, E.fondo, V(ex0 + E.ancho - 0.012, 0, ez0), null);
-    b.caja(E.ancho, E.alto, 0.012, V(ex0, 0, ez0 + E.fondo - 0.012), null, true);
+    const bandeja = (y: number) => {
+      b.caja(E.ancho, 0.015, E.fondo, V(ex0, y, ez0), null);
+      b.caja(E.ancho, E.alto, 0.012, V(ex0, y, ez0), null);
+      b.caja(0.012, E.alto, E.fondo, V(ex0, y, ez0), null);
+      b.caja(0.012, E.alto, E.fondo, V(ex0 + E.ancho - 0.012, y, ez0), null);
+      b.caja(E.ancho, E.alto, 0.012, V(ex0, y, ez0 + E.fondo - 0.012), null, true);
+    };
+    bandeja(0);
+    const pisos = E.pisos === 2 ? [E.piso, 0.015] : [0.015];
+    if (E.pisos === 2) {
+      bandeja(E.piso - 0.015);
+      for (const [px, pz] of [[ex0, ez0], [ex0 + E.ancho - 0.02, ez0], [ex0, ez0 + E.fondo - 0.02], [ex0 + E.ancho - 0.02, ez0 + E.fondo - 0.02]]) {
+        b.caja(0.02, E.piso, 0.02, V(px, 0, pz), null);
+      }
+    }
+    const techo = E.pisos === 2 ? E.techo : 0.4;
     compartimentos.push({
       clave: `extra:${ex.id}`,
       nombre: ex.nombre,
-      superficies: [{ sup: { ancho: E.ancho - 0.06, fondo: E.fondo - 0.06 }, matriz: matrizSuperficie(ex0 + E.ancho / 2, 0.015, 0) }],
-      caja: new THREE.Box3(V(ex0, 0, ez0), V(ex0 + E.ancho, 0.4, ez0 + E.fondo)),
-      ancla: V(ex0 + E.ancho / 2, 0.55, 0),
-      radioMax: 0.045,
-      zonas: [],
+      superficies: pisos.map((y, i) => ({
+        sup: { ancho: E.ancho - 0.06, fondo: E.fondo - 0.06, alto: (i === 0 ? techo : pisos[i - 1] - 0.015) - y },
+        matriz: matrizSuperficie(ex0 + E.ancho / 2, y, 0),
+      })),
+      caja: new THREE.Box3(V(ex0, 0, ez0), V(ex0 + E.ancho, techo, ez0 + E.fondo)),
+      ancla: V(ex0 + E.ancho / 2, techo + 0.15, 0),
+      zonas: E.pisos === 2
+        ? [new THREE.Box3(V(ex0, E.piso - 0.015, ez0), V(ex0 + E.ancho, techo, ez0 + E.fondo)), new THREE.Box3(V(ex0, 0, ez0), V(ex0 + E.ancho, E.piso - 0.015, ez0 + E.fondo))]
+        : [],
     });
   });
 

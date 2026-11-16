@@ -14,6 +14,7 @@ const NOMBRES = {
   faint: "--ink-faint",
   cyan: "--cyan",
   blue: "--blue",
+  active: "--active", // NEVERA-7: el violeta de ARIA, para el tono de algunas categorías
   done: "--done",
   warn: "--warn",
   danger: "--danger",

@@ -7,10 +7,12 @@ import { piel } from "./piel";
 
 // NEVERA-6: dos estilos. El rótulo de un compartimento («balda 1», «puerta») y la etiqueta de un elemento al pasar
 // el ratón (nombre y días). Si se pisan, cede el compartimento: lo que el usuario está señalando manda.
-export type EstiloEtiqueta = "compartimento" | "elemento";
+// NEVERA-7: dos más. «nombre», la etiqueta fija (nombre corto y días) de lo más urgente de cada balda, que cede ante
+// todo lo demás; y «monton», la pastilla con el número de un montón, que solo cede ante lo señalado.
+export type EstiloEtiqueta = "compartimento" | "elemento" | "nombre" | "monton";
 
 /** Jerarquía para resolver solapes: la de menor rango es la que se aparta. */
-export const RANGO_ETIQUETA: Record<EstiloEtiqueta, number> = { compartimento: 1, elemento: 2 };
+export const RANGO_ETIQUETA: Record<EstiloEtiqueta, number> = { nombre: 0, compartimento: 1, monton: 1.5, elemento: 2 };
 
 /** Margen transparente alrededor del texto dentro del lienzo de la etiqueta, en px CSS. */
 export const MARGEN_ETIQUETA_PX = 6;
@@ -19,6 +21,8 @@ const TAMANOS: Record<EstiloEtiqueta, { titulo: number; sub: number; espaciado: 
   // NEVERA-6: los tamaños de «anillo» y «menor» de PYTHAGORAS; el nombre de un producto se parte como un curso.
   compartimento: { titulo: 10.5, sub: 9, espaciado: 0.08 },
   elemento: { titulo: 11.5, sub: 9.5, espaciado: 0.03, lineaMax: 22 },
+  nombre: { titulo: 10.5, sub: 9, espaciado: 0.02, lineaMax: 20 },
+  monton: { titulo: 11, sub: 9, espaciado: 0.02 },
 };
 
 /** Parte un texto en líneas de hasta `max` caracteres por los espacios (una palabra más larga va sola). */
@@ -108,6 +112,18 @@ export class Etiqueta {
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     const p = piel(); // NEVERA-6: la sombra es el --void-900 de la piel
+    if (this.estilo === "monton") {
+      // NEVERA-7: la pastilla del montón, en el panel elevado con el borde fuerte, para que el número se lea encima de
+      // cualquier cosa.
+      const m = 2 * s;
+      ctx.fillStyle = p.elevado;
+      ctx.strokeStyle = p.bordeFuerte;
+      ctx.lineWidth = 1.2 * s;
+      ctx.beginPath();
+      ctx.roundRect(m, m, w - 2 * m, h - 2 * m, (h - 2 * m) / 2);
+      ctx.fill();
+      ctx.stroke();
+    }
     ctx.shadowColor = p.void;
     ctx.shadowBlur = 5 * s;
     const pintar = (texto: string, fuente: string, color: string, y: number, esp: string) => {
@@ -120,7 +136,7 @@ export class Etiqueta {
     };
     // NEVERA-6: el rótulo de un compartimento va en gris tenue y su recuento del color que se le pase (el del más
     // urgente que lleva); el elemento, en tinta, y sus días del color de su urgencia.
-    const colorTitulo = this.estilo === "compartimento" ? p.muted : p.ink;
+    const colorTitulo = this.estilo === "compartimento" ? p.muted : p.ink; // NEVERA-7: «nombre» y «monton», en tinta
     lineas.forEach((l, i) => pintar(l, fuenteTitulo, colorTitulo, pad + altoLinea * i, espaciado));
     if (this.sub) pintar(this.sub, fuenteSub, this.color, pad + altoTitulo, "0px");
     this.textura.needsUpdate = true;
