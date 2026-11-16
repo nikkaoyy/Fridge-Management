@@ -1,5 +1,5 @@
 // Chrome headless por DevTools Protocol, sin dependencias (WebSocket y fetch de Node ≥ 22).
-// Lo usan scripts/humo_pantalla.mjs y las capturas de PEDIDO-NEVERA-3. No es parte del servicio.
+// Lo usan scripts/humo_pantalla.mjs, scripts/garantias_pantalla.mjs y las capturas (NEVERA-3 y 4). No es parte del servicio.
 //
 //   const nav = await abrir({ ancho: 390, alto: 844 });
 //   await nav.ir("http://127.0.0.1:8451/");
@@ -18,7 +18,7 @@ import { join } from "node:path";
 const CHROME = process.env.NEVERA_CHROME || "/opt/hermes/tools/chromium-1208/chrome-linux64/chrome";
 const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function abrir({ ancho = 390, alto = 844, escala = 2 } = {}) {
+export async function abrir({ ancho = 390, alto = 844, escala = 2, movil = true } = {}) {
   // HOME propio: con el de la máquina, crashpad no puede escribir en ~/.config y Chrome muere al arrancar.
   const casa = mkdtempSync(join(tmpdir(), "nevera-chrome-"));
   const perfil = join(casa, "perfil");
@@ -80,8 +80,8 @@ export async function abrir({ ancho = 390, alto = 844, escala = 2 } = {}) {
   await cmd("Runtime.enable");
   await cmd("Log.enable");
   await cmd("Network.enable");
-  await cmd("Emulation.setDeviceMetricsOverride", { width: ancho, height: alto, deviceScaleFactor: escala, mobile: true });
-  await cmd("Emulation.setTouchEmulationEnabled", { enabled: true });
+  await cmd("Emulation.setDeviceMetricsOverride", { width: ancho, height: alto, deviceScaleFactor: escala, mobile: movil });
+  await cmd("Emulation.setTouchEmulationEnabled", { enabled: movil });
   await cmd("Emulation.setTimezoneOverride", { timezoneId: "America/Bogota" });
 
   async function evaluar(expresion) {
@@ -122,6 +122,15 @@ export async function abrir({ ancho = 390, alto = 844, escala = 2 } = {}) {
       await this.pintado();
       const r = await cmd("Page.captureScreenshot", { format: "png" });
       writeFileSync(ruta, Buffer.from(r.data, "base64"));
+    },
+    async capturaCompleta(ruta) {   // la página entera, no solo lo que cabe en la ventana
+      await this.pintado();
+      const m = await cmd("Page.getLayoutMetrics");
+      const { width, height } = m.cssContentSize || m.contentSize;
+      const r = await cmd("Page.captureScreenshot", { format: "png", captureBeyondViewport: true,
+                                                      clip: { x: 0, y: 0, width, height, scale: 1 } });
+      writeFileSync(ruta, Buffer.from(r.data, "base64"));
+      return { ancho: width, alto: height };
     },
     async cerrar() {
       try { ws.close(); } catch (_) { /* da igual */ }

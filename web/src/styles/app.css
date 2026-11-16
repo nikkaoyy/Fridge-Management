@@ -75,8 +75,160 @@ input:focus, select:focus { border-color: var(--cyan); box-shadow: var(--glow); 
 }
 
 /* ---------- Tablero ---------- */
-.tablero { max-width: 760px; margin: 0 auto; padding: 0 14px 96px; }
-.barra { display: flex; align-items: center; gap: 10px; padding: 14px 0 10px; }
-.barra h1 { font-size: 22px; flex: 1; }
-.quien { color: var(--ink-muted); font-size: 13px; }
-.resumen { color: var(--ink-muted); }
+.tablero { max-width: 1180px; margin: 0 auto; padding: 0 14px 104px; }
+.barra { display: flex; align-items: center; gap: 10px; padding: 14px 0 12px; }
+.marca-app { flex: 1; min-width: 0; }
+.marca-app .sobretitulo { margin: 0; }
+.barra h1 { font-size: 24px; line-height: 1.1; }
+.quien { color: var(--ink-muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alta .barra h1 { flex: 1; }
+.volver { color: var(--cyan); padding-left: 0; }
+
+/* ---------- Cifras: en grande y primero ---------- */
+.cifras { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.cifra {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  background: var(--void-800); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 10px 12px;
+}
+/* móvil: la cifra principal y el valor en riesgo comparten la primera fila; los cuatro tramos, 2×2 debajo */
+.cifra-heroe {
+  grid-column: 1; grid-row: 1;
+  background: linear-gradient(135deg, var(--void-700), var(--void-800));
+  box-shadow: var(--shadow);
+}
+.cifra-ancha { grid-column: 2; grid-row: 1; }
+.cifra-etiqueta { display: flex; align-items: center; gap: 8px; color: var(--ink-muted); font-size: 13px; }
+.cifra-valor { color: var(--ink); font-size: 28px; line-height: 1.15; font-weight: 400; letter-spacing: -0.02em; }
+.cifra-heroe .cifra-valor { font-size: 44px; line-height: 1.05; color: var(--cyan); }
+.cifra-ancha .cifra-valor { font-size: 22px; line-height: 1.6; overflow-wrap: anywhere; }
+.cifra-valor.sin-dato { font-size: 24px; color: var(--ink-faint); }
+.cifra-nota { color: var(--ink-faint); font-size: 12px; }
+.marca { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--ink-faint); flex: none; }
+.tono-danger .marca { background: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 22%, transparent); }
+.tono-warn .marca { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent); }
+.tono-done .marca { background: var(--done); }
+.tono-neutro .marca { background: var(--line-strong); }
+.tono-danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+
+/* ---------- Herramientas ---------- */
+.herramientas { display: flex; gap: 8px; align-items: stretch; }
+.herramientas input { flex: 1; min-width: 0; }
+.chip {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 46px; padding: 0 14px; flex: none;
+  border-radius: var(--radius); border: 1px solid var(--line-strong); background: var(--void-800); cursor: pointer;
+}
+.chip[aria-pressed="true"] { border-color: var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--void-800)); }
+.hoy-es { color: var(--ink-faint); font-size: 12px; margin: 8px 2px 14px; }
+.boton-agregar {
+  display: none; min-height: 46px; padding: 0 18px; flex: none; border: 0; border-radius: var(--radius); cursor: pointer;
+  background: var(--cyan); color: var(--void-900); font-weight: 600;
+}
+
+/* ---------- Secciones por ubicación ---------- */
+.secciones { display: flex; flex-direction: column; gap: 12px; }
+.seccion { background: var(--void-800); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; }
+.seccion-titulo { font-size: 18px; }
+.seccion-titulo button {
+  width: 100%; min-height: 54px; display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+  background: transparent; border: 0; cursor: pointer; text-align: left; font: inherit;
+}
+.seccion-nombre { flex: 1; text-transform: capitalize; }
+.seccion-cuenta {
+  font-size: 14px; color: var(--cyan); background: var(--cyan-soft); border-radius: 999px; padding: 2px 10px;
+}
+.seccion-urgentes {
+  font-family: var(--font-body); font-size: 12px; color: var(--ink);
+  background: color-mix(in srgb, var(--danger) 22%, transparent); border: 1px solid var(--danger);
+  border-radius: 999px; padding: 1px 8px;
+}
+.chevron {
+  width: 10px; height: 10px; border-right: 2px solid var(--ink-muted); border-bottom: 2px solid var(--ink-muted);
+  transform: rotate(45deg) translate(-2px, -2px); transition: transform 0.15s;
+}
+.plegada .chevron { transform: rotate(-45deg); }
+.seccion-cuerpo { border-top: 1px solid var(--line); padding: 10px; }
+.vacio { padding: 10px 6px; color: var(--ink-muted); }
+.vacio p { margin: 0 0 6px; }
+.vacio-total { padding: 18px 16px; margin-bottom: 12px; text-align: center; color: var(--ink-muted); }
+
+/* ---------- Tarjeta ---------- */
+.tarjetas { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.tarjeta {
+  --sem: var(--ink-faint);
+  background: var(--void-700); border: 1px solid var(--line); border-left: 4px solid var(--sem);
+  border-radius: var(--radius); padding: 10px 12px; min-width: 0;
+}
+.sem-vencido, .sem-urgente { --sem: var(--danger); }
+.sem-pronto { --sem: var(--warn); }
+.sem-bien { --sem: var(--done); }
+.sem-vencido { background: color-mix(in srgb, var(--danger) 9%, var(--void-700)); border-color: color-mix(in srgb, var(--danger) 50%, var(--line)); border-left-color: var(--danger); }
+.tarjeta-fila { display: flex; align-items: flex-start; gap: 10px; }
+.tarjeta-nombre { flex: 1; min-width: 0; font-family: var(--font-body); font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.tarjeta-nombre small { color: var(--ink-muted); font-weight: 400; }
+.marca-vencido {
+  display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 4px; vertical-align: 1px;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  background: var(--danger); color: var(--void-900);
+}
+.dias {
+  display: inline-flex; align-items: center; gap: 6px; flex: none; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 12px; color: var(--ink);
+  padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--sem) 16%, transparent);
+}
+.dias .marca { width: 8px; height: 8px; border-radius: 50%; background: var(--sem); }
+.tarjeta-datos { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 14px; margin: 8px 0 0; }
+.tarjeta-datos div { min-width: 0; }
+.tarjeta-datos dt { color: var(--ink-faint); font-size: 11px; }
+.tarjeta-datos dd { margin: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tenue { color: var(--ink-faint); }
+.tarjeta-extra { margin: 6px 0 0; color: var(--ink-muted); font-size: 12px; }
+.tarjeta-nota { margin: 6px 0 0; color: var(--ink-muted); font-size: 13px; font-style: italic; border-left: 2px solid var(--active); padding-left: 8px; }
+.acciones { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+.accion {
+  min-height: 40px; padding: 0 4px; font-size: 13px; border-radius: var(--radius);
+  background: var(--void-800); border: 1px solid var(--line-strong); cursor: pointer;
+}
+.accion:active { border-color: var(--cyan); }
+.accion.apagada { display: grid; place-items: center; color: var(--ink-faint); border-style: dashed; cursor: default; }
+.confirma { margin-top: 10px; padding: 10px; border-radius: var(--radius); background: var(--void-800); border: 1px solid var(--cyan); }
+.pregunta { margin: 0 0 8px; font-size: 14px; }
+.confirma input { margin-bottom: 8px; }
+.botones { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; }
+.botones button { min-height: 44px; border-radius: var(--radius); cursor: pointer; }
+.si { background: var(--cyan); color: var(--void-900); border: 0; font-weight: 600; }
+.confirma[data-accion="botar"] .si { background: var(--danger); }
+.no { background: transparent; border: 1px solid var(--line-strong); }
+
+/* ---------- Alta ---------- */
+.alta-panel { padding: 16px; max-width: 560px; }
+.par { display: grid; grid-template-columns: 1fr 110px; gap: 10px; }
+.foto { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.foto .boton-secundario { margin-top: 0; }
+.foto-vista { width: 72px; height: 72px; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--line-strong); }
+.mensaje { color: var(--done); margin: 10px 0 0; }
+
+.agregar-flotante {
+  position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 5;
+  min-height: 52px; padding: 0 20px; border: 0; border-radius: 999px; cursor: pointer;
+  background: var(--cyan); color: var(--void-900); font-weight: 600; box-shadow: var(--shadow);
+}
+.aviso {
+  position: fixed; left: 16px; right: 16px; bottom: calc(80px + env(safe-area-inset-bottom)); z-index: 6;
+  max-width: 520px; margin: 0 auto; padding: 12px 14px; border-radius: var(--radius);
+  background: var(--void-600); border: 1px solid var(--done); box-shadow: var(--shadow);
+}
+.aviso.malo { border-color: var(--danger); }
+
+/* ---------- Pantallas anchas: las cifras en una fila, las tarjetas en rejilla ---------- */
+@media (min-width: 760px) {
+  .tablero { padding: 0 24px 104px; }
+  .cifras { grid-template-columns: 1.4fr repeat(4, 1fr) 1.6fr; }
+  .cifra { padding: 12px 14px; }
+  .cifra-heroe, .cifra-ancha { grid-column: auto; grid-row: auto; }
+  .cifra-valor { font-size: 34px; }
+  .cifra-heroe .cifra-valor { font-size: 56px; }
+  .cifra-ancha .cifra-valor { font-size: 34px; line-height: 1.15; }
+  .boton-agregar { display: block; }
+  .agregar-flotante { display: none; }
+  .tarjetas { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+}
