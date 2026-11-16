@@ -33,7 +33,21 @@ def conectar(ruta: str) -> sqlite3.Connection:
 
 @contextlib.contextmanager
 def transaccion(cx: sqlite3.Connection):
-    """BEGIN IMMEDIATE … COMMIT; ROLLBACK ante cualquier excepción (todo o nada)."""
+    """BEGIN IMMEDIATE … COMMIT; ROLLBACK ante cualquier excepción (todo o nada).
+
+    Si la conexión ya está dentro de una transacción (el simulacro de `simulacro`), esta queda anidada como
+    SAVEPOINT: lo que haga se deshace o se suelta, y la decisión final es de la transacción de fuera."""
+    if cx.in_transaction:
+        cx.execute("SAVEPOINT anidada")
+        try:
+            yield cx
+        except BaseException:
+            cx.execute("ROLLBACK TO anidada")
+            cx.execute("RELEASE anidada")
+            raise
+        else:
+            cx.execute("RELEASE anidada")
+        return
     cx.execute("BEGIN IMMEDIATE")
     try:
         yield cx
@@ -42,6 +56,30 @@ def transaccion(cx: sqlite3.Connection):
         raise
     else:
         cx.execute("COMMIT")
+
+
+@contextlib.contextmanager
+def simulacro(cx: sqlite3.Connection):
+    """Corre lo de dentro con todas sus validaciones y escrituras y al final lo deshace: ROLLBACK siempre.
+
+    Para decir qué se habría escrito sin escribirlo (las herramientas MCP sin `confirmar: true`)."""
+    cx.execute("BEGIN IMMEDIATE")
+    try:
+        yield cx
+    finally:
+        cx.execute("ROLLBACK")
+
+
+def salud(ruta_base: str) -> dict:
+    """El cuerpo de GET /salud: versión de la app, esquema de la base y dónde está."""
+    from . import __version__
+    cx = conectar(ruta_base)
+    try:
+        esquema = version(cx)
+    finally:
+        cx.close()
+    return {"ok": True, "version": __version__, "esquema": esquema,
+            "base": os.path.relpath(ruta_base, RAIZ) if ruta_base.startswith(RAIZ + os.sep) else ruta_base}
 
 
 def version(cx: sqlite3.Connection) -> int:

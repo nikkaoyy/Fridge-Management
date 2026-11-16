@@ -1,6 +1,9 @@
 # Servicio
 fastapi==0.163.1
 uvicorn==0.54.0
+# Servidor MCP en /mcp (PEDIDO-NEVERA-8): la misma versión que invest-api
+mcp==2.3.0
+mcp-types==2.3.0
 # Pruebas y verificación del contrato
 pytest==9.2.0
 httpx==0.28.1

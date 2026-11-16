@@ -2,6 +2,7 @@
 
 Arranque:  NEVERA_ADMIN_TOKEN=… TZ=America/Bogota .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8451
 (o scripts/arrancar.sh, que además comprueba que el puerto esté libre y deja el log en data/servicio.log).
+El servidor MCP (PEDIDO-NEVERA-8) va en /mcp de la misma app: app/mcp_servidor.py.
 
 Variables de entorno:
 - NEVERA_DATOS        directorio de datos (base y fotos); por defecto data/ en el repositorio.
@@ -14,8 +15,9 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from starlette.routing import Route
 
-from . import __version__, auth, db, errores, pantalla
+from . import __version__, auth, db, errores, mcp_servidor, pantalla
 from . import rutas_catalogo, rutas_elementos, rutas_fase2, rutas_importar, rutas_miembros, rutas_recetas
 
 log = logging.getLogger("nevera")
@@ -54,7 +56,8 @@ def crear_app(datos: str | None = None, token_admin=_NO_DADO) -> FastAPI:
         app.state.datos, app.state.ruta_base = dir_datos, ruta
         log.info("base %s (%s, esquema %s)", ruta, "creada ahora" if creada else "existente", db.VERSION_ESQUEMA)
         log.info(mensaje)
-        yield
+        async with montaje_mcp.ciclo():  # el gestor de sesiones del servidor MCP vive lo que vive la app
+            yield
 
     app = FastAPI(title="Catálogo de nevera", version=__version__, lifespan=ciclo,
                   docs_url=None, redoc_url=None, openapi_url=None)  # el contrato es api/openapi.yaml
@@ -62,17 +65,14 @@ def crear_app(datos: str | None = None, token_admin=_NO_DADO) -> FastAPI:
 
     @app.get("/salud")
     def salud(request: Request):
-        cx = db.conectar(request.app.state.ruta_base)
-        try:
-            esquema = db.version(cx)
-        finally:
-            cx.close()
-        return {"ok": True, "version": __version__, "esquema": esquema,
-                "base": os.path.relpath(request.app.state.ruta_base, db.RAIZ)
-                if request.app.state.ruta_base.startswith(db.RAIZ + os.sep) else request.app.state.ruta_base}
+        return db.salud(request.app.state.ruta_base)
 
     for r in (rutas_catalogo, rutas_elementos, rutas_importar, rutas_miembros, rutas_recetas, rutas_fase2):
         app.include_router(r.router)
+    # Servidor MCP en /mcp (app/mcp_servidor.py), mismo proceso y mismo puerto. Route y no Mount: /mcp responde sin
+    # redirigir a /mcp/; include_in_schema=False: no es parte del contrato HTTP (api/openapi.yaml).
+    montaje_mcp = mcp_servidor.MontajeMCP(mcp_servidor.crear_servidor(app), app)
+    app.router.routes.append(Route(mcp_servidor.RUTA, endpoint=montaje_mcp, include_in_schema=False))
     pantalla.instalar(app)  # la UI (PEDIDO-NEVERA-4): web/dist en /, /assets, /fonts; fuera del contrato
     return app
 

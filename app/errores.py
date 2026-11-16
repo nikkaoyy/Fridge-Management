@@ -85,6 +85,21 @@ def _lugar(loc) -> str:
     return ".".join(partes) if partes else "cuerpo"
 
 
+def de_validacion(errors) -> ErrorApi:
+    """Los errores de validación de pydantic como el 400 `invalido` del contrato (lo usan la API y el MCP)."""
+    errores = [{"campo": _lugar(x.get("loc", ())), "motivo": _motivo(x)} for x in errors]
+    primero = errores[0] if errores else {"campo": "cuerpo", "motivo": "petición inválida"}
+    return ErrorApi(400, "invalido", f"{primero['campo']}: {primero['motivo']}", {"errores": errores})
+
+
+def de_integridad(e: sqlite3.IntegrityError) -> ErrorApi:
+    """Lo que la validación no atrapó y la base sí: 409 si es unicidad o clave foránea, si no 400."""
+    texto = str(e)
+    if "UNIQUE" in texto or "FOREIGN KEY" in texto:
+        return ErrorApi(409, "conflicto", f"la base rechazó la escritura: {texto}")
+    return ErrorApi(400, "invalido", f"la base rechazó la escritura: {texto}")
+
+
 def instalar(app: FastAPI) -> None:
     @app.exception_handler(ErrorApi)
     async def _error_api(_: Request, e: ErrorApi):
@@ -93,9 +108,8 @@ def instalar(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validacion(_: Request, e: RequestValidationError):
-        errores = [{"campo": _lugar(x.get("loc", ())), "motivo": _motivo(x)} for x in e.errors()]
-        primero = errores[0] if errores else {"campo": "cuerpo", "motivo": "petición inválida"}
-        return respuesta(400, "invalido", f"{primero['campo']}: {primero['motivo']}", {"errores": errores})
+        v = de_validacion(e.errors())
+        return respuesta(v.status, v.codigo, v.mensaje, v.detalle)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(_: Request, e: StarletteHTTPException):
@@ -105,10 +119,8 @@ def instalar(app: FastAPI) -> None:
     @app.exception_handler(sqlite3.IntegrityError)
     async def _integridad(_: Request, e: sqlite3.IntegrityError):
         # Lo que la validación de la API no atrapó y la base sí: se dice, no se convierte en 500.
-        texto = str(e)
-        if "UNIQUE" in texto or "FOREIGN KEY" in texto:
-            return respuesta(409, "conflicto", f"la base rechazó la escritura: {texto}")
-        return respuesta(400, "invalido", f"la base rechazó la escritura: {texto}")
+        v = de_integridad(e)
+        return respuesta(v.status, v.codigo, v.mensaje)
 
     @app.exception_handler(Exception)
     async def _inesperado(request: Request, e: Exception):
