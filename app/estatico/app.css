@@ -56,7 +56,7 @@ button:disabled { opacity: .55; cursor: default; }
 .quien { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: .9rem; }
 .quien span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .9; }
 .boton-texto {
-  min-height: 36px; padding: 4px 10px; border: 1px solid rgba(255,255,255,.5); border-radius: 8px;
+  min-height: 40px; padding: 4px 12px; border: 1px solid rgba(255,255,255,.5); border-radius: 8px;
   background: transparent; color: #fff; font-size: .85rem; white-space: nowrap;
 }
 

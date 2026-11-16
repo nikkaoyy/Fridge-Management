@@ -46,3 +46,41 @@ def test_la_api_no_cambia_de_rutas(cliente):
 def test_los_estaticos_vienen_del_repositorio():
     for nombre in ("index.html", "app.js", "app.css"):
         assert os.path.isfile(os.path.join(RAIZ, "app", "estatico", nombre)), nombre
+
+
+def test_ni_la_raiz_ni_los_estaticos_llevan_datos(cliente, admin, leche, ubic):
+    """Con datos en la base, nada de lo que se sirve sin token los nombra: los datos solo salen de la API."""
+    admin.ok("POST", "/elementos", json={"presentacion_id": leche["bolsa"], "ubicacion_id": ubic["nevera"]})
+    for ruta in ("/", "/estatico/app.js", "/estatico/app.css"):
+        r = cliente.get(ruta)  # sin cabecera Authorization
+        assert r.status_code == 200
+        assert "leche" not in r.text.lower() and "lácteos" not in r.text.lower(), ruta
+
+
+def _llamadas_de_app_js() -> list[tuple[str, str]]:
+    import re
+    texto = open(os.path.join(RAIZ, "app", "estatico", "app.js"), encoding="utf-8").read()
+    llamadas = []
+    for metodo, ruta in re.findall(r'api\("([A-Z]+)",\s*[`"]([^`"]+)[`"]', texto):
+        ruta = re.sub(r"\$\{[^}]+\}", "1", ruta).split("?", 1)[0]
+        llamadas.append((metodo, ruta))
+    return llamadas
+
+
+def test_la_pantalla_solo_llama_endpoints_del_contrato():
+    from conftest import _operacion
+    llamadas = _llamadas_de_app_js()
+    assert ("GET", "/miembros/yo") in llamadas and ("POST", "/importar") in llamadas
+    for metodo, ruta in llamadas:
+        plantilla, op = _operacion(metodo, ruta)
+        assert op is not None, f"app.js llama {metodo} {ruta}, que no está en api/openapi.yaml"
+        assert op.get("x-estado", "implementado") != "declarado", f"{metodo} {plantilla} es de la fase 2"
+
+
+def test_la_pantalla_no_inyecta_html():
+    """Lo que viene de la API entra con textContent: ningún sumidero de HTML en app.js."""
+    import re
+    texto = open(os.path.join(RAIZ, "app", "estatico", "app.js"), encoding="utf-8").read()
+    for sumidero in (r"\.innerHTML\b", r"\.outerHTML\b", r"insertAdjacentHTML", r"document\.write", r"\beval\(",
+                     r"new Function\("):
+        assert not re.search(sumidero, texto), sumidero
