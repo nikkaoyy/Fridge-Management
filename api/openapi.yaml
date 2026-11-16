@@ -1025,7 +1025,6 @@ paths:
         de la versión vigente y no puede ir dos veces. Si a alguno no le alcanza el saldo, responde 409
         `saldo_insuficiente` con `detalle.faltan` (qué elemento, cuánto se pide y cuánto hay) y no escribe nada.
       operationId: cocinarReceta
-      x-estado: declarado
       requestBody:
         required: true
         content:
@@ -1047,7 +1046,6 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Cocinado' }
-        '501': { $ref: '#/components/responses/NoImplementado' }
 
   # Fase 2: declarada, no implementada (sigue).
 

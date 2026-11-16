@@ -12,16 +12,20 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from . import db
 from .deps import autorizar, conexion
-from .dominio import EPS, magnitud_producto, redondear
-from .errores import conflicto, invalido, no_encontrado
-from .modelos import IngredienteNuevo, RecetaNueva, RecetaVersionNueva
+from .dominio import EPS, SQL_MOVIMIENTOS, elemento_vista, hoy, magnitud_producto, movimiento_json, redondear
+from .errores import ErrorApi, conflicto, invalido, no_encontrado
+from .modelos import Cocinar, IngredienteNuevo, RecetaNueva, RecetaVersionNueva
 
 router = APIRouter(dependencies=[Depends(autorizar)])
+
+SQL_VIGENTE = ("SELECT * FROM receta_version rv WHERE rv.receta_id = ? AND rv.numero = "
+               "(SELECT MAX(numero) FROM receta_version WHERE receta_id = rv.receta_id)")
+
 
 # ---------------------------------------------------------------- lecturas con la forma del contrato
 
@@ -220,3 +224,55 @@ def crear_version(id: int, datos: RecetaVersionNueva, cx=Depends(conexion)):
         vid = _crear_version(cx, id, datos)
         cuerpo = _versiones_json(cx, cx.execute("SELECT * FROM receta_version WHERE id = ?", (vid,)).fetchall())[0]
     return JSONResponse(cuerpo, status_code=201)
+
+
+@router.post("/recetas/{id}/cocinar")
+def cocinar(id: int, request: Request, datos: Cocinar, cx=Depends(conexion)):
+    miembro = request.state.miembro
+    with db.transaccion(cx):
+        r = _receta(cx, id)
+        v = cx.execute(SQL_VIGENTE, (id,)).fetchone()
+        de_la_receta = {f[0] for f in cx.execute(
+            "SELECT producto_id FROM receta_ingrediente WHERE receta_version_id = ?", (v["id"],))}
+        fecha = datos.fecha or hoy()
+        vistos: set[int] = set()
+        plan, faltan = [], []
+        for i, c in enumerate(datos.consumos):
+            if c.elemento_id in vistos:
+                raise invalido(f"consumo {i + 1}: el elemento {c.elemento_id} va dos veces; junta las cantidades")
+            vistos.add(c.elemento_id)
+            e = elemento_vista(cx, c.elemento_id)
+            if e is None:
+                raise no_encontrado("elemento", c.elemento_id)
+            if not e["es_hoja"]:
+                raise conflicto(f"el elemento {e['id']} es un pack con hijos: se cocina con sus hojas", "es_pack")
+            if e["producto_id"] not in de_la_receta:
+                raise invalido(f"consumo {i + 1}: el elemento {e['id']} («{e['producto']}») no es de un ingrediente "
+                               f"de «{r['nombre']}» (versión {v['numero']})", elemento_id=e["id"])
+            if fecha < e["fecha_compra"]:
+                raise invalido(f"fecha {fecha} es anterior a la compra del elemento {e['id']} ({e['fecha_compra']})")
+            u = cx.execute("SELECT * FROM unidad WHERE codigo = ?", (c.unidad or e["unidad_base"],)).fetchone()
+            if u is None:
+                raise invalido(f"consumo {i + 1}: la unidad '{c.unidad}' no existe en el catálogo")
+            magnitud, base = magnitud_producto(cx, e["producto_id"])
+            if u["magnitud"] != magnitud:
+                raise invalido(f"consumo {i + 1}: la unidad '{c.unidad}' no es de la magnitud de «{e['producto']}» "
+                               f"({magnitud})")
+            cantidad, saldo = redondear(c.cantidad * u["factor_a_base"]), redondear(e["saldo"])
+            if saldo - cantidad < -EPS:
+                faltan.append({"elemento_id": e["id"], "producto": e["producto"], "pide": cantidad, "hay": saldo,
+                               "unidad": base})
+            plan.append((e["id"], cantidad))
+        if faltan:
+            texto = "; ".join(f"{f['producto']} (elemento {f['elemento_id']}) tiene {f['hay']:g} {f['unidad']} y se "
+                              f"piden {f['pide']:g} {f['unidad']}" for f in faltan)
+            raise ErrorApi(409, "saldo_insuficiente", f"no alcanza: {texto}. No se descontó nada.", {"faltan": faltan})
+        motivo = f"receta {r['nombre']}"
+        ids = [cx.execute("INSERT INTO movimiento (elemento_id, fecha, tipo, cantidad, motivo, miembro_id) "
+                          "VALUES (?, ?, 'consumo', ?, ?, ?)", (eid, fecha, cantidad, motivo, miembro["id"])).lastrowid
+               for eid, cantidad in plan]
+        marcas = ",".join("?" * len(ids))
+        movimientos = [movimiento_json(f) for f in cx.execute(SQL_MOVIMIENTOS + f" WHERE id IN ({marcas}) ORDER BY id",
+                                                               ids)]
+    return JSONResponse({"receta_id": r["id"], "receta_version_id": v["id"], "motivo": motivo,
+                         "movimientos": movimientos}, status_code=201)

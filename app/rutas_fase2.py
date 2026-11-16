@@ -14,7 +14,6 @@ DECLARADAS = [
     ("GET", "/proveedores"), ("POST", "/proveedores"),
     ("GET", "/precios"), ("POST", "/precios"),
     ("GET", "/planes"), ("POST", "/planes"),
-    ("POST", "/recetas/{id}/cocinar"),  # PEDIDO-NEVERA-5: declarado en el bloque 1, implementado en el bloque 2
 ]
 
 

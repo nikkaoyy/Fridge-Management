@@ -152,3 +152,14 @@ class RecetaNueva(Modelo):
     nombre: Nombre
     nota: str | None = None
     version: RecetaVersionNueva
+
+
+class ConsumoReceta(Modelo):
+    elemento_id: int
+    cantidad: Positivo
+    unidad: str | None = None
+
+
+class Cocinar(Modelo):
+    consumos: Annotated[list[ConsumoReceta], Field(min_length=1)]
+    fecha: Fecha | None = None
