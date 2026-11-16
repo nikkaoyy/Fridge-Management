@@ -73,7 +73,7 @@ def crear_app(datos: str | None = None, token_admin=_NO_DADO) -> FastAPI:
 
     for r in (rutas_catalogo, rutas_elementos, rutas_importar, rutas_miembros, rutas_fase2):
         app.include_router(r.router)
-    pantalla.instalar(app)  # la UI (PEDIDO-NEVERA-3): / y /estatico/*, fuera del contrato
+    pantalla.instalar(app)  # la UI (PEDIDO-NEVERA-4): web/dist en /, /assets, /fonts; fuera del contrato
     return app
 
 

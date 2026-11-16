@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#070b12" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="description" content="Nevera: qué hay en casa y qué vence, con la piel de ARIA." />
+    <title>Nevera · la casa de ARIA</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" href="/fonts/inter-latin-wght-normal-Dx4kXJAl.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/space-grotesk-latin-500-normal-lFbtlQH6.woff2" as="font" type="font/woff2" crossorigin />
+    <!-- Piel de ARIA: copia literal de /opt/data/pythagoras/web/src/styles/tokens.css (tests/test_pantalla.py lo
+         coteja). No se edita aquí: si ARIA cambia, se vuelve a copiar. -->
+    <style id="piel-aria">
+/* Piel del núcleo de ARIA: tokens copiados del HUD compilado (http://aria-hud/assets/index-*.css),
+   no una paleta parecida. Se sirven en línea en el <head> y app.css solo usa estas variables. */
+:root {
+  --void-900: #070b12;      /* fondo */
+  --void-800: #0f1520;      /* panel */
+  --void-700: #151c2a;      /* panel elevado */
+  --void-600: #1b2333;
+  --line: #232c3e;          /* borde */
+  --line-strong: #465369;
+  --ink: #e8edf4;           /* texto */
+  --ink-muted: #a0acbf;
+  --ink-faint: #76839a;
+  --cyan: #62d6ea;          /* acento */
+  --cyan-soft: #62d6ea1f;
+  --blue: #5b8def;          /* secundario */
+  --done: #4ccf8f;          /* éxito */
+  --warn: #f2b84b;          /* aviso */
+  --active: #c98bf0;        /* violeta, acento alterno */
+
+  --radius: 8px;
+  --radius-lg: 14px;
+  --shadow: 0 0 0 1px #62d6ea4d, 0 12px 32px #00000073;
+  --glow: 0 0 0 3px #62d6ea26;
+
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+    </style>
+    <!-- El único color que no es de ARIA, declarado (PEDIDO-NEVERA-4): lo vencido y lo que vence en ≤ 2 días. -->
+    <style id="piel-nevera">
+:root {
+  --danger: #ef5f7a;        /* vencido o ≤ 2 días; ≤ 7 usa --warn y el resto --done */
+}
+    </style>
+  </head>
+  <body>
+    <!-- Esta página no trae ningún dato: el script pide el token, lo valida con GET /miembros/yo y solo entonces
+         pide lo demás a la API (mismo origen). -->
+    <div id="raiz"></div>
+    <noscript>Nevera necesita JavaScript.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
