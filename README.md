@@ -2,7 +2,7 @@
 
 Backend del catálogo de la nevera de la casa: qué hay, qué vence, qué se botó y quién lo hizo. FastAPI + SQLite, sin
 ORM. El modelo está en `docs/modelo-relacional.md`, el DDL en `db/esquema.sql`, el contrato en `api/openapi.yaml` y el
-plan en `docs/plan.md`. Fase 1 del plan (`PEDIDO-NEVERA-2.md`), su primera pantalla (`PEDIDO-NEVERA-3.md`) y el tablero en React con la piel de ARIA (`PEDIDO-NEVERA-4.md`).
+plan en `docs/plan.md`. Fase 1 del plan (`PEDIDO-NEVERA-2.md`), su primera pantalla (`PEDIDO-NEVERA-3.md`) el tablero en React con la piel de ARIA (`PEDIDO-NEVERA-4.md`) y las recetas con su pestaña (`PEDIDO-NEVERA-5.md`).
 Dónde está todo hoy: `docs/ESTADO.md`.
 
 ## Requisitos
@@ -118,6 +118,18 @@ mkdir /tmp/nevera-humo && export NEVERA_DATOS=/tmp/nevera-humo NEVERA_ADMIN_TOKE
 scripts/arrancar.sh && scripts/humo.sh; scripts/parar.sh
 ```
 
+Recetas (`PEDIDO-NEVERA-5.md`): `scripts/humo_recetas.sh` (crear, versión 2, unidad fuera del catálogo, sugeridas,
+cocinar con 409 sin saldo y cocinar de verdad) y `scripts/recetas_pantalla.mjs` (la pestaña en Chrome). El humo y el
+modo `--escribe` **crean filas**: van contra una copia de la base en `/tmp` y se niegan a correr en el 8451. Sin
+`--escribe`, la pantalla solo lee y vale para la base real (comprueba al final que la base quedó igual):
+
+```
+node scripts/recetas_pantalla.mjs http://127.0.0.1:8451 data/admin.token docs/recetas-5.png   # base real, solo lee
+# contra la copia (127.0.0.1:8452, NEVERA_DATOS en /tmp, exportado en el mismo shell que arrancar/parar):
+NEVERA_ADMIN_TOKEN="$(cat data/admin.token)" scripts/humo_recetas.sh http://127.0.0.1:8452
+node scripts/recetas_pantalla.mjs http://127.0.0.1:8452 data/admin.token /tmp/recetas-copia.png --escribe
+```
+
 ## Pruebas
 
 ```
@@ -126,5 +138,7 @@ scripts/arrancar.sh && scripts/humo.sh; scripts/parar.sh
 
 Cada prueba crea su propia base en un directorio temporal (`tmp_path`) y su app; nada toca `data/`. Todas las
 respuestas se validan contra `api/openapi.yaml` (código declarado y cuerpo sin campos de más ni de menos). Cubren auth
-y roles (y que el token no sale en logs), D1, D3, D4, D5, vencimientos, atribución, el importador todo-o-nada, y
-`scripts/verificacion.py` (anomalías del modelo sobre el esquema versión 2).
+y roles (y que el token no sale en logs), D1, D3, D4, D5, vencimientos, atribución, el importador todo-o-nada,
+`scripts/verificacion.py` (anomalías del modelo sobre el esquema versión 2) y las recetas (`tests/test_recetas.py`:
+la versión nueva no toca la anterior, sugeridas por urgencia, cocinar descuenta en una transacción y sin saldo es
+409 sin escribir).

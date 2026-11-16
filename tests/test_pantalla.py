@@ -188,6 +188,24 @@ def test_el_front_solo_llama_endpoints_del_contrato():
             assert "fetch(" not in texto, archivo
 
 
+def test_el_titulo_sin_emojis():
+    """PEDIDO-NEVERA-5: el título es «Nevera · la casa de ARIA», tal cual, y en el front no hay emojis."""
+    indice = open(os.path.join(WEB, "index.html"), encoding="utf-8").read()
+    assert re.findall(r"<title>(.*?)</title>", indice) == ["Nevera · la casa de ARIA"]
+    emoji = re.compile("[\U0001F000-\U0001FAFF☀-➿️‍]")
+    for archivo, texto in {os.path.join(WEB, "index.html"): indice, **_fuentes()}.items():
+        assert not emoji.search(texto), f"{archivo}: {emoji.search(texto).group()!r}"
+
+
+def test_las_recetas_vacias_dicen_su_frase():
+    texto = open(os.path.join(WEB, "src", "componentes", "Recetas.tsx"), encoding="utf-8").read()
+    assert "Todavía no hay recetas: crea la primera con lo que sueles cocinar." in texto
+    llamadas = set(_llamadas())
+    for esperada in (("GET", "/recetas"), ("GET", "/recetas/sugeridas"), ("POST", "/recetas"),
+                     ("POST", "/recetas/1/versiones"), ("POST", "/recetas/1/cocinar"), ("GET", "/recetas/1")):
+        assert esperada in llamadas, esperada
+
+
 def test_el_front_no_inyecta_html():
     """Lo que viene de la API entra como texto (JSX lo escapa): ningún sumidero de HTML en web/src."""
     for archivo, texto in _fuentes().items():
