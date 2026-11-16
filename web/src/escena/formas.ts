@@ -201,7 +201,7 @@ void main() {
 }`;
 
 /**
- * Un contorno redondeado (superelipse) de grosor constante en píxeles: el ancho de la línea se mide con fwidth, así
+ * Un contorno redondeado (rectángulo de esquinas redondas) de grosor constante en píxeles: el ancho de la línea se mide con fwidth, así
  * que de lejos y de cerca es el mismo trazo fino. `aAro.x` es su opacidad (lo que vence fuerte, lo que no, tenue) y
  * `aAro.y` si late: entonces la opacidad sube y baja despacio (≈ 2,4 s), sin cambiar de tamaño.
  */
@@ -213,10 +213,12 @@ varying vec2 vP;
 varying vec3 vColor;
 varying vec2 vAro;
 void main() {
-  vec2 q = abs(vP);
-  float r = pow(pow(q.x, 3.0) + pow(q.y, 3.0), 1.0 / 3.0);
+  // Distancia con signo a un rectángulo redondeado (semilado 0,9, radio 0,35): sin pow, que en SwiftShader y en
+  // GPUs modestas se pagaba en cada píxel del cuadrado.
+  vec2 q = abs(vP) - vec2(0.55);
+  float r = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - 0.35;
   float w = fwidth(r);
-  float d = abs(r - 0.9) - uGrosorPx * w * 0.5;
+  float d = abs(r) - uGrosorPx * w * 0.5;
   float a = 1.0 - smoothstep(0.0, w * 1.1, d);
   float latido = 0.5 + 0.5 * sin(uTiempo * 2.6);
   float alfa = vAro.x * mix(1.0, 0.4 + 0.6 * latido, vAro.y * uLatido);
@@ -245,6 +247,20 @@ void main() {
   gl_FragColor = vec4(uColor, a);
   #include <colorspace_fragment>
 }`;
+
+/**
+ * El aro se dibuja sobre un marco cuadrado de ±1 con el centro hueco (±hueco), no sobre el cuadrado entero: la línea
+ * va en el borde (0,9 en los lados; en las esquinas redondeadas, hasta ≈ 0,8 hacia dentro) y el interior solo
+ * gastaba píxeles transparentes. Con 0,7 se ahorra la mitad del área (el aro era lo que más costaba en el móvil).
+ */
+const HUECO_ARO = 0.7;
+function marco(h: number) {
+  const g = new THREE.BufferGeometry();
+  // 0-3: esquinas de fuera; 4-7: las de dentro (mismo orden: abajo-izq, abajo-der, arriba-der, arriba-izq).
+  g.setAttribute("position", new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0, -h, -h, 0, h, -h, 0, h, h, 0, -h, h, 0], 3));
+  g.setIndex([0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7]);
+  return g;
+}
 
 export interface OpcionesSenales {
   /** Color de la sombra (el --void-900 de la piel). */
@@ -275,7 +291,7 @@ export class Senales {
       transparent: true,
       depthWrite: false,
     });
-    const geoAro = plano.clone();
+    const geoAro = marco(HUECO_ARO);
     this.aAro = new THREE.InstancedBufferAttribute(new Float32Array(capacidad * 2), 2);
     this.aAro.setUsage(THREE.DynamicDrawUsage);
     geoAro.setAttribute("aAro", this.aAro);
