@@ -48,3 +48,14 @@ NEVERA_ADMIN_TOKEN='…' TZ=America/Bogota .venv/bin/uvicorn app.main:app --host
 - **Arranques siguientes**: `NEVERA_ADMIN_TOKEN` ya no se usa (si viene, se ignora y el log lo dice sin mostrarlo).
 - `TZ=America/Bogota`: «hoy» (vencimientos, compra del día) es el día de Bogotá, no el de UTC.
 - `NEVERA_DATOS`: directorio de datos (base, fotos). Por defecto `data/` dentro del repositorio.
+
+## Pruebas
+
+```
+.venv/bin/python -m pytest -q
+```
+
+Cada prueba crea su propia base en un directorio temporal (`tmp_path`) y su app; nada toca `data/`. Todas las
+respuestas se validan contra `api/openapi.yaml` (código declarado y cuerpo sin campos de más ni de menos). Cubren auth
+y roles (y que el token no sale en logs), D1, D3, D4, D5, vencimientos, atribución, el importador todo-o-nada, y
+`scripts/verificacion.py` (anomalías del modelo sobre el esquema versión 2).

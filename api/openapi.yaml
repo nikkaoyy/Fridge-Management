@@ -1402,7 +1402,7 @@ components:
       required: [simulado, filas, creados, productos_nuevos, compras, omitidos]
       properties:
         simulado: { type: boolean }
-        filas: { type: integer, description: Filas de datos leídas (sin la cabecera). }
+        filas: { type: integer, description: Filas de datos leídas (sin la cabecera; las vacías cuentan y van también en `omitidos`). }
         creados: { type: integer, description: Elementos que se crearon (o se crearían). }
         productos_nuevos: { type: array, items: { type: string } }
         compras: { type: integer, description: Compras distintas (por fecha) creadas o reutilizadas. }
