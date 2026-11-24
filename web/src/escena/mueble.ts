@@ -2,6 +2,9 @@
 // de verduras entreabierto— y una despensa aparte, una caja abierta por delante con dos baldas. Geometría simple, sin
 // modelos ni descargas: cajas. Todo lo opaco va fusionado en una malla, el vidrio en otra y las aristas en un solo
 // LineSegments: tres llamadas de dibujo para el mueble entero, con cualquier número de compartimentos.
+// NEVERA-9: lo opaco deja de ser un velo y es superficie (el material lo pone motor.ts). Las aristas llevan color por
+// vértice (RGBA): las de lo opaco son el bisel claro que separa la silueta del fondo y las del vidrio, su canto, más
+// marcado, para que una balda transparente se vea. Siguen siendo una sola llamada.
 // Unidades: metros. y arriba, +z hacia quien mira.
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
@@ -39,10 +42,20 @@ const PUERTA = { grosor: 0.05, estantes: [1.3, 0.86, 0.42], fondoEstante: 0.1 };
 const EXTRA = { fondo: 0.44, alto: 0.07, separacion: 0.14, piso: 0.32, techo: 0.66 };
 export const medidaExtra = (n: number) => ({ ancho: n > 10 ? 0.82 : n > 5 ? 0.6 : 0.46, pisos: n > 10 ? 2 : 1 });
 
+/** NEVERA-9: color (con alfa) de las aristas de lo opaco (bisel) y de las del vidrio (canto). Los pone motor.ts desde la piel. */
+export interface TonosAristas {
+  bisel: THREE.Color;
+  alfaBisel: number;
+  canto: THREE.Color;
+  alfaCanto: number;
+}
+
 class Constructor {
   readonly opacas: THREE.BufferGeometry[] = [];
   readonly vidrios: THREE.BufferGeometry[] = [];
   readonly aristas: THREE.BufferGeometry[] = [];
+
+  constructor(private readonly tonos: TonosAristas | null) {}
 
   /** Una caja de tamaño (x, y, z) con su esquina inferior trasera izquierda en `desde`, transformada por `m`. */
   caja(dx: number, dy: number, dz: number, desde: THREE.Vector3, m: THREE.Matrix4 | null, vidrio = false, conAristas = true) {
@@ -50,7 +63,18 @@ class Constructor {
     g.translate(desde.x + dx / 2, desde.y + dy / 2, desde.z + dz / 2);
     if (m) g.applyMatrix4(m);
     (vidrio ? this.vidrios : this.opacas).push(g.toNonIndexed());
-    if (conAristas) this.aristas.push(new THREE.EdgesGeometry(g, 30));
+    if (conAristas) {
+      const a = new THREE.EdgesGeometry(g, 30);
+      // NEVERA-9: el color va por vértice, así bisel y canto comparten una sola llamada de dibujo.
+      const t = this.tonos;
+      const c = t ? (vidrio ? t.canto : t.bisel) : new THREE.Color(1, 1, 1);
+      const alfa = t ? (vidrio ? t.alfaCanto : t.alfaBisel) : 1;
+      const n = a.getAttribute("position").count;
+      const rgba = new Float32Array(n * 4);
+      for (let i = 0; i < n; i++) rgba.set([c.r, c.g, c.b, alfa], i * 4);
+      a.setAttribute("color", new THREE.Float32BufferAttribute(rgba, 4));
+      this.aristas.push(a);
+    }
     g.dispose();
   }
 }
@@ -64,8 +88,8 @@ function matrizSuperficie(x: number, y: number, z: number, giroY = 0, padre: THR
 }
 
 /** Construye el mueble con un hueco para cada raíz extra que tenga cosas (congelador, frutero…), a la derecha. */
-export function construirMueble(extras: { id: number; nombre: string; n: number }[]): Mueble {
-  const b = new Constructor();
+export function construirMueble(extras: { id: number; nombre: string; n: number }[], tonos: TonosAristas | null = null): Mueble {
+  const b = new Constructor(tonos);
   const compartimentos: Compartimento[] = [];
   const N = NEVERA;
   const x0 = N.x - N.ancho / 2;

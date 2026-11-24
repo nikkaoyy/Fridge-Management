@@ -2,13 +2,19 @@
 
 Las copias se cotejan con el original cuando el repositorio de PYTHAGORAS está en la máquina (como los tokens en
 test_pantalla.py); sin él, se comprueba solo lo que se puede comprobar desde aquí.
+
+NEVERA-9: el original es el del commit que dice la cabecera de cada copia (1ac4185), leído con `git show`, y no el
+árbol de trabajo de PYTHAGORAS: PYTHAGORAS siguió (PYTHAGORAS 11 cambió camara.ts y el resolvedor de rótulos) y estas
+pruebas fallaban ya en 6f4ade7 por eso, no por la copia.
 """
 from __future__ import annotations
 
+import functools
 import glob
 import json
 import os
 import re
+import subprocess
 
 import pytest
 
@@ -16,7 +22,15 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ESCENA = os.path.join(RAIZ, "web", "src", "escena")
 PY = "/opt/data/pythagoras"
 PY_ESCENA = os.path.join(PY, "web", "src", "escena")
+ORIGEN = "1ac4185"  # el commit de PYTHAGORAS del que salieron las copias (cabecera «// ORIGEN: … @ 1ac4185»)
 hay_pythagoras = pytest.mark.skipif(not os.path.isdir(PY_ESCENA), reason="PYTHAGORAS no está en esta máquina")
+
+
+@functools.cache
+def _original(nombre: str) -> str:
+    """El archivo de la escena de PYTHAGORAS tal como estaba en ORIGEN."""
+    return subprocess.run(["git", "-C", PY, "show", f"{ORIGEN}:web/src/escena/{nombre}"], check=True,
+                          capture_output=True, text=True).stdout
 
 
 def _leer(ruta: str) -> str:
@@ -42,12 +56,12 @@ def test_cada_pieza_copiada_dice_de_donde_salio():
 @hay_pythagoras
 @pytest.mark.parametrize("nombre", ["azar.ts", "instancias.ts"])
 def test_las_copias_sin_cambios_son_identicas(nombre):
-    assert _sin_cabecera(_leer(os.path.join(ESCENA, nombre))) == _leer(os.path.join(PY_ESCENA, nombre))
+    assert _sin_cabecera(_leer(os.path.join(ESCENA, nombre))) == _original(nombre)
 
 
 @hay_pythagoras
 def test_el_halo_instanciado_es_el_mismo():
-    original = _leer(os.path.join(PY_ESCENA, "shaders.ts"))
+    original = _original("shaders.ts")
     i = original.index("/**\n * Halo de cuerpos instanciados")
     j = original.index("/** Anillo de PYTHAGORAS")
     assert _sin_cabecera(_leer(os.path.join(ESCENA, "shaders.ts"))) == original[i:j].rstrip() + "\n"
@@ -58,7 +72,7 @@ def test_la_camara_solo_cambia_el_giro_solo():
     copia = _sin_cabecera(_leer(os.path.join(ESCENA, "camara.ts")))
     copia = re.sub(r"  /\*\* NEVERA-6:[^\n]*\n  giroSolo\?: boolean;\n", "", copia)
     copia = copia.replace("this.opciones.giroSolo !== false && ", "")
-    assert copia == _leer(os.path.join(PY_ESCENA, "camara.ts"))
+    assert copia == _original("camara.ts")
 
 
 def _funcion(texto: str, nombre: str) -> str:
@@ -69,7 +83,7 @@ def _funcion(texto: str, nombre: str) -> str:
 
 @hay_pythagoras
 def test_el_resolvedor_de_etiquetas_es_el_de_pythagoras():
-    original = _leer(os.path.join(PY_ESCENA, "motor.ts"))
+    original = _original("motor.ts")
     copia = _leer(os.path.join(ESCENA, "etiquetas.ts"))
     for nombre in ("hueco", "colocarEtiqueta"):
         assert _funcion(copia, nombre) == _funcion(original, nombre), nombre
@@ -80,7 +94,7 @@ def test_el_resolvedor_de_etiquetas_es_el_de_pythagoras():
 @hay_pythagoras
 def test_el_material_del_atlas_es_el_de_las_lunas():
     """El truco del atlas por instancia (aCelda que encoge el UV a la celda) es el de `materialLunas`, línea a línea."""
-    original = _leer(os.path.join(PY_ESCENA, "motor.ts"))
+    original = _original("motor.ts")
     copia = _leer(os.path.join(ESCENA, "texturas.ts"))
     i = original.index("  m.onBeforeCompile = (sh) => {")
     j = original.index("  m.customProgramCacheKey", i)

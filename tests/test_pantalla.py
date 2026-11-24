@@ -11,6 +11,7 @@ import glob
 import hashlib
 import os
 import re
+import subprocess
 
 import pytest
 from fastapi.testclient import TestClient
@@ -238,7 +239,12 @@ def test_la_piel_es_la_de_aria_copiada_tal_cual():
     assert aria["--font-body"].startswith('"Inter"') and aria["--font-display"].startswith('"Space Grotesk"')
     assert aria["--font-mono"].startswith('"JetBrains Mono"')
     if os.path.isfile(TOKENS_ARIA):  # en la máquina: copia literal, byte a byte
-        assert _bloque(indice, "piel-aria") + "\n" == open(TOKENS_ARIA, encoding="utf-8").read()
+        # NEVERA-9: lo commiteado en PYTHAGORAS (HEAD), no su árbol de trabajo: el 2026-11-24 otra sesión tenía a medio
+        # hacer un `--naranja` propio de PYTHAGORAS («no viene del HUD») sin commit, y la prueba fallaba por eso.
+        commiteado = subprocess.run(["git", "-C", os.path.dirname(TOKENS_ARIA), "show", "HEAD:./tokens.css"],
+                                    capture_output=True, text=True)
+        original = commiteado.stdout if commiteado.returncode == 0 else open(TOKENS_ARIA, encoding="utf-8").read()
+        assert _bloque(indice, "piel-aria") + "\n" == original
     # un solo color propio, y declarado
     assert _variables(_bloque(indice, "piel-nevera")) == {"--danger": "#ef5f7a"}
 

@@ -14,6 +14,8 @@
 // falta: los cuerpos son de pocos polígonos y se dibujan siempre (cinco InstancedMesh, una por forma), y la urgencia
 // pasa a un aro fino. Las instancias no se mueven: se suben al cambiar la lista o al desplegar un montón, no cada
 // cuadro. Las etiquetas fijas de lo más urgente y la pastilla de los montones usan el mismo resolvedor de solapes.
+// NEVERA-9: el mueble tiene cuerpo (caras opacas en un tono neutro de la piel, bisel claro, vidrio transparente con
+// canto) y la luz direccional viene de arriba a la izquierda de quien mira. Sin sombras dinámicas ni postproceso.
 import * as THREE from "three";
 import { semaforo, textoDias, type Semaforo, type Ubicaciones } from "../logica";
 import type { Elemento } from "../tipos";
@@ -110,6 +112,8 @@ export interface EstadisticasEscena {
   encuadre: string;
   /** Encuadra un compartimento o una balda como si se tocara su hueco (para las pruebas: sin buscar dónde tocar). */
   encuadrar: (clave: string, zona?: number) => void;
+  /** NEVERA-9: rectángulo en pantalla (px CSS desde la esquina del lienzo, recortado a él) de todo el mueble. */
+  cajaMueble: () => { x0: number; y0: number; x1: number; y1: number };
 }
 
 export interface OpcionesMotor {
@@ -297,6 +301,7 @@ export class MotorNevera {
       pastillaDe: (clave) => this.pastillaDe(clave),
       encuadre: "general",
       encuadrar: (clave, zona) => this.encuadrarCompartimento(clave, zona),
+      cajaMueble: () => this.cajaMueble(),
     };
 
     // Lienzo opaco (ver cabecera) y, en modo ligero, sin antialias: solo se decide al crear el contexto.
@@ -310,9 +315,11 @@ export class MotorNevera {
     contenedor.appendChild(this.lienzo);
 
     this.escena.add(this.raiz);
-    this.escena.add(new THREE.AmbientLight(new THREE.Color(p.muted), 1.1));
-    const luz = new THREE.DirectionalLight(new THREE.Color(p.ink), 2.2);
-    luz.position.set(0.6, 2.5, 3);
+    // NEVERA-9: ambiente más bajo y la direccional desde arriba a la izquierda de quien mira (y algo por delante), para
+    // que las caras del mueble se distingan entre sí: techo y lateral izquierdo claros, el derecho en penumbra.
+    this.escena.add(new THREE.AmbientLight(new THREE.Color(p.muted), 0.9));
+    const luz = new THREE.DirectionalLight(new THREE.Color(p.ink), 2.4);
+    luz.position.set(-1.6, 3, 2.2);
     this.escena.add(luz);
 
     this.mueble = this.crearMueble([]);
@@ -625,26 +632,37 @@ export class MotorNevera {
 
   private crearMueble(extras: { id: number; nombre: string; n: number }[]): Mueble {
     const p = piel();
-    const m = construirMueble(extras);
+    // NEVERA-9: bisel en tinta tenue y canto del vidrio en tinta: el mueble no tiene color propio (ni cian ni verde).
+    const m = construirMueble(extras, {
+      bisel: new THREE.Color(p.faint),
+      alfaBisel: 0.5,
+      canto: new THREE.Color(p.ink),
+      alfaCanto: 0.55,
+    });
+    // Caras opacas: escriben profundidad (tapan lo de detrás, como un mueble) y se empujan un poco hacia atrás
+    // (polygonOffset) para que el bisel, que cae justo en sus bordes, gane siempre. El tono: --ink-faint llevado
+    // hacia --line-strong; con la luz física de three (albedo/π) queda un gris azulado oscuro, sin color propio. Un
+    // token más oscuro (--line, --void-*) se perdía contra el fondo.
     m.opaco.material = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(p.elevado),
-      roughness: 0.9,
+      color: new THREE.Color(p.faint).lerp(new THREE.Color(p.bordeFuerte), 0.45),
+      roughness: 0.92,
       metalness: 0,
-      transparent: true,
-      opacity: 0.55,
-      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1,
     });
+    // Vidrio: transparencia real, sin escribir profundidad (no tapa lo que hay detrás); lo que se ve es su canto.
     m.vidrio.material = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(p.cyan),
-      roughness: 0.2,
+      color: new THREE.Color(p.ink),
+      roughness: 0.15,
       metalness: 0,
       transparent: true,
-      opacity: 0.1,
+      opacity: 0.07,
       depthWrite: false,
     });
-    m.aristas.material = new THREE.LineBasicMaterial({ color: new THREE.Color(p.cyan), transparent: true, opacity: 0.42, depthWrite: false });
-    m.opaco.renderOrder = 1;
+    m.aristas.material = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false });
     m.vidrio.renderOrder = 1;
+    m.aristas.renderOrder = 1;
     // El centro de la escena en el origen: el rig orbita el origen y limita el desplazamiento desde él.
     this.raiz.position.copy(m.caja.getCenter(new THREE.Vector3())).negate();
     this.raiz.add(m.opaco, m.vidrio, m.aristas);
@@ -1107,6 +1125,23 @@ export class MotorNevera {
     if (!caja) return null;
     const v = caja.getCenter(V1).add(this.raiz.position).project(this.camara);
     return { x: Math.round(((v.x + 1) / 2) * this.ancho), y: Math.round(((1 - v.y) / 2) * this.alto) };
+  }
+
+  /** NEVERA-9: el rectángulo en pantalla de las 8 esquinas de la caja del mueble, recortado al lienzo. */
+  private cajaMueble() {
+    const b = this.mueble.caja.clone().translate(this.raiz.position);
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      const v = V1.set(i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z).project(this.camara);
+      const sx = ((v.x + 1) / 2) * this.ancho;
+      const sy = ((1 - v.y) / 2) * this.alto;
+      x0 = Math.min(x0, sx);
+      y0 = Math.min(y0, sy);
+      x1 = Math.max(x1, sx);
+      y1 = Math.max(y1, sy);
+    }
+    const r = (v: number, max: number) => Math.round(clamp(v, 0, max));
+    return { x0: r(x0, this.ancho), y0: r(y0, this.alto), x1: r(x1, this.ancho), y1: r(y1, this.alto) };
   }
 
   private pastillaDe(clave: string) {
