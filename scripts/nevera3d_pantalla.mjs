@@ -18,7 +18,7 @@
 //    (nombre, cantidad, dónde, días, Abrí/Se acabó/Botar/Fecha); «Fecha» abre su confirmación y «No» la cierra.
 //    Recargar: la app vuelve sola a la nevera (localStorage).
 // 2. Móvil emulado 390×844 (escala 3, táctil): modo ligero automático por `pointer: coarse`, fps, toque en una cosa →
-//    hoja con la tarjeta y su etiqueta (en el teléfono no hay etiquetas fijas: solo la de lo elegido). Capturas
+//    hoja con la tarjeta y su etiqueta (NEVERA-9: en el teléfono, sin interacción, ≤ 3 nombres de lo que vence en ≤ 2 días). Capturas
 //    <docs>/nevera3d-movil-<sufijo>.png y <docs>/nevera3d-movil-panel-<sufijo>.png. Y el antes: fps con el modo ligero
 //    apagado a mano.
 // 3. Sin WebGL (Chrome con --disable-webgl): el interruptor dice por qué y se queda en la lista; con la nevera
@@ -184,8 +184,9 @@ try {
   ok(etq.solapes === 0, `etiquetas sin solapes: ${etq.visibles.join(", ")} (separación mínima ${etq.separacionMin} px)`);
   const porCompG = {};
   for (const [b, n] of Object.entries(etq.porBalda)) porCompG[b.split("#")[0]] = (porCompG[b.split("#")[0]] ?? 0) + n;
-  ok(etq.nombres.length > 0 && Object.values(porCompG).every((n) => n <= 2),
-     `de lejos, nombres fijos en lo más urgente, ≤ 2 por compartimento: ${JSON.stringify(porCompG)}`);
+  // NEVERA-9: sin interacción, solo lo que vence en ≤ 2 días, por turnos entre compartimentos, y ≤ 6 rótulos en total.
+  ok(etq.nombres.length > 0 && Object.values(porCompG).every((n) => n <= 2) && etq.visibles.length <= 6 && etq.activo === null,
+     `de lejos, nombres fijos en lo más urgente, ≤ 2 por compartimento y ≤ 6 rótulos: ${JSON.stringify(porCompG)} (${etq.visibles.length})`);
   await esc.captura(`${DOCS}/nevera3d-${SUF}.png`);
   console.log(`      ${DOCS}/nevera3d-${SUF}.png: ${medir(`${DOCS}/nevera3d-${SUF}.png`)}`);
 
@@ -303,7 +304,8 @@ try {
   const s = await mov.evaluar("({ ancho: window.__nevera.ancho, scroll: window.__nevera.scroll_horizontal })");
   ok(s.ancho === 390 && !s.scroll, "móvil: 390 de ancho, sin scroll horizontal");
   const etqM = await mov.evaluar("JSON.parse(JSON.stringify(window.__nevera.escena.etiquetas))");
-  ok(etqM.nombres.length === 0, `móvil: sin etiquetas fijas (solo rótulos y pastillas): ${etqM.visibles.join(", ")}`);
+  // NEVERA-9: en el teléfono, sin interacción, como mucho 3 nombres de lo que vence en ≤ 2 días (antes, ninguno).
+  ok(etqM.nombres.length <= 3 && etqM.visibles.length <= 3, `móvil: ≤ 3 rótulos sin interacción: ${etqM.visibles.join(", ")}`);
   await mov.captura(`${DOCS}/nevera3d-movil-${SUF}.png`);
   console.log(`      ${DOCS}/nevera3d-movil-${SUF}.png: ${medir(`${DOCS}/nevera3d-movil-${SUF}.png`)}`);
   let zona = await encuadrarNivel(mov, "despensa", 0, toque);
@@ -323,8 +325,8 @@ try {
   ok(id === cosa.id, `toque en una cosa (${els.find((e) => e.id === id)?.producto}) → la hoja con su tarjeta`);
   await espera(500);
   const etqS = await mov.evaluar("JSON.parse(JSON.stringify(window.__nevera.escena.etiquetas))");
-  ok(etqS.visibles.includes(els.find((e) => e.id === id)?.producto) && etqS.nombres.length === 0,
-     `móvil: la única etiqueta de cosa es la de la elegida (${els.find((e) => e.id === id)?.producto})`);
+  ok(etqS.visibles.includes(els.find((e) => e.id === id)?.producto) && etqS.solapes === 0,
+     `móvil: la elegida (${els.find((e) => e.id === id)?.producto}) lleva su etiqueta, sin solapes: ${etqS.visibles.join(", ")}`);
   await mov.captura(`${DOCS}/nevera3d-movil-panel-${SUF}.png`);
   await mov.tocar("#cerrar-panel");
   await mov.esperar("!document.querySelector('.panel-3d')", 3000);

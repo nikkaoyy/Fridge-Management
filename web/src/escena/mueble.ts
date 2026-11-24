@@ -15,7 +15,9 @@ export interface Compartimento {
   nombre: string;
   /** Superficies en orden de llenado (la de arriba primero) con su matriz: del marco local de la superficie al mundo. */
   superficies: { sup: Superficie; matriz: THREE.Matrix4 }[];
-  /** Caja que lo envuelve (tocar dentro encuadra el compartimento) y punto del que cuelga su rótulo. */
+  /** Caja que lo envuelve (tocar dentro encuadra el compartimento) y punto del que cuelga su rótulo. NEVERA-9: el
+   *  punto está en el borde inferior delantero de su cuerpo (el suelo del mueble), así el rótulo va en una franja
+   *  debajo, nunca sobre la boca del mueble ni sobre lo que lleva. */
   caja: THREE.Box3;
   ancla: THREE.Vector3;
   /** El hueco de cada superficie (de ella a la de arriba), en su orden: tocar dentro encuadra solo ese nivel. */
@@ -117,7 +119,7 @@ export function construirMueble(extras: { id: number; nombre: string; n: number 
       matriz: matrizSuperficie(N.x, y + 0.008, zBalda),
     })),
     caja: new THREE.Box3(V(x0, BALDAS_Y[2], z0), V(x0 + N.ancho, N.alto, N.fondo / 2)),
-    ancla: V(N.x, N.alto + 0.2, 0),
+    ancla: V(N.x, 0, N.fondo / 2),
     zonas: BALDAS_Y.map((y, i) => new THREE.Box3(V(x0, y, z0), V(x0 + N.ancho, i === 0 ? N.alto : BALDAS_Y[i - 1], N.fondo / 2))),
   });
 
@@ -138,7 +140,7 @@ export function construirMueble(extras: { id: number; nombre: string; n: number 
     nombre: "cajón de verduras",
     superficies: [{ sup: supCajon, matriz: matrizSuperficie(N.x, yc + 0.012, zc + fondoCajon / 2) }],
     caja: new THREE.Box3(V(xc, 0, zc), V(xc + anchoCajon, BALDAS_Y[2], zc + fondoCajon)),
-    ancla: V(N.x, -0.02, zc + fondoCajon),
+    ancla: V(N.x, 0, N.fondo / 2 + CAJON.salida),
     zonas: [],
   });
 
@@ -161,7 +163,7 @@ export function construirMueble(extras: { id: number; nombre: string; n: number 
     // El marco de la superficie gira 180°: su frente (+z) es el borde del estante, lejos de la puerta.
     superficies: PUERTA.estantes.map((y, i) => ({ sup: { ...supEstante, alto: (i === 0 ? N.alto : PUERTA.estantes[i - 1]) - y - 0.02 }, matriz: matrizSuperficie(N.ancho / 2, y + 0.01, -PUERTA.fondoEstante / 2, Math.PI, mPuerta) })),
     caja: cajaPuerta,
-    ancla: V(N.ancho * 0.3, N.alto + 0.2, -0.05).applyMatrix4(mPuerta),
+    ancla: V(N.ancho / 2, 0, 0).applyMatrix4(mPuerta),
     zonas: [],
   });
 
@@ -187,7 +189,7 @@ export function construirMueble(extras: { id: number; nombre: string; n: number 
       matriz: matrizSuperficie(D.x, y, zDespensa),
     })),
     caja: new THREE.Box3(V(dx0, 0, dz0), V(dx0 + D.ancho, D.alto, D.fondo / 2)),
-    ancla: V(D.x, D.alto + 0.2, 0),
+    ancla: V(D.x, 0, D.fondo / 2),
     zonas: [D.alto - dt, ...nivelesDespensa].map((techo, i, l) =>
       new THREE.Box3(V(dx0, i + 1 < l.length ? l[i + 1] : 0, dz0), V(dx0 + D.ancho, techo, D.fondo / 2))),
   });
@@ -224,7 +226,7 @@ export function construirMueble(extras: { id: number; nombre: string; n: number 
         matriz: matrizSuperficie(ex0 + E.ancho / 2, y, 0),
       })),
       caja: new THREE.Box3(V(ex0, 0, ez0), V(ex0 + E.ancho, techo, ez0 + E.fondo)),
-      ancla: V(ex0 + E.ancho / 2, techo + 0.15, 0),
+      ancla: V(ex0 + E.ancho / 2, 0, ez0 + E.fondo),
       zonas: E.pisos === 2
         ? [new THREE.Box3(V(ex0, E.piso - 0.015, ez0), V(ex0 + E.ancho, techo, ez0 + E.fondo)), new THREE.Box3(V(ex0, 0, ez0), V(ex0 + E.ancho, E.piso - 0.015, ez0 + E.fondo))]
         : [],

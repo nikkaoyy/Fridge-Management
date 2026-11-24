@@ -189,14 +189,17 @@ def test_el_nombre_corto_de_la_etiqueta():
     assert all(len(n) <= FAMILIAS["nombreCorto"]["largoMax"] for n in got)
 
 
-def test_etiquetas_fijas_con_tope_y_solo_lo_elegido_en_el_movil():
-    """Una o dos por compartimento de lejos, tres por balda de cerca, en el teléfono ninguna fija; todas pasan por el
-    resolvedor de solapes de siempre y el nombre fijo es lo primero que cede."""
+def test_etiquetas_con_prioridad_y_tope_sin_interaccion():
+    """NEVERA-9 (antes, NEVERA-7: dos por compartimento de lejos y ninguna fija en el teléfono): prioridad declarada
+    —el compartimento activo, luego lo que vence en ≤ 2 días, nada más—, tope sin interacción de 6 (3 en el teléfono),
+    tres por balda en el compartimento encuadrado; todas pasan por el resolvedor de siempre, con los bordes del
+    lienzo como paredes, y el nombre fijo es lo primero que cede."""
     motor = _sin_comentarios(_leer("motor.ts"))
-    assert re.search(r"const NOMBRES_POR_COMPARTIMENTO = 2;", motor)
     assert re.search(r"const NOMBRES_POR_BALDA = 3;", motor)
-    assert re.search(r"if \(!this\.tactil\) \{", motor)
-    assert "colocarEtiqueta(k.caja, puestas" in motor
+    assert re.search(r"const TOPE_SIN_INTERACCION = \{ escritorio: 6, tactil: 3 \};", motor)
+    assert 'c.sem !== "vencido" && c.sem !== "urgente"' in motor
+    assert "r.comp.clave === activo" in motor
+    assert "colocarEtiqueta(k.caja, obstaculos" in motor and "...paredes" in motor
     etq = _leer("etiquetas.ts")
     rangos = dict(re.findall(r"(\w+): ([\d.]+)", re.search(r"RANGO_ETIQUETA[^=]*= \{([^}]*)\}", etq).group(1)))
     assert min(rangos, key=lambda k: float(rangos[k])) == "nombre" and max(rangos, key=lambda k: float(rangos[k])) == "elemento"

@@ -16,12 +16,15 @@
 // cuadro. Las etiquetas fijas de lo más urgente y la pastilla de los montones usan el mismo resolvedor de solapes.
 // NEVERA-9: el mueble tiene cuerpo (caras opacas en un tono neutro de la piel, bisel claro, vidrio transparente con
 // canto) y la luz direccional viene de arriba a la izquierda de quien mira. Sin sombras dinámicas ni postproceso.
+// NEVERA-9, bloque 2: los rótulos tienen prioridad declarada —(1) el compartimento encuadrado, (2) lo que vence en
+// ≤ 2 días, (3) nada más— y sin interacción no pasan de 6 (3 en el teléfono). El del compartimento va en una franja
+// bajo su cuerpo y esquiva los productos; ninguno sale del lienzo (se acorta o se corre de lado).
 import * as THREE from "three";
 import { semaforo, textoDias, type Semaforo, type Ubicaciones } from "../logica";
 import type { Elemento } from "../tipos";
 import { RigCamara } from "./camara";
 import { agrupar, colocar, compartimentoDe, piezasDe, sigla, type ClaveCompartimento } from "./colocar";
-import { bajar, colocarEtiqueta, Etiqueta, hueco, MARGEN_ETIQUETA_PX, RANGO_ETIQUETA, type Caja } from "./etiquetas";
+import { bajar, colocarEtiqueta, Etiqueta, hueco, MARGEN_ETIQUETA_PX, RANGO_ETIQUETA, SEPARACION_ETIQUETAS_PX, type Caja } from "./etiquetas";
 import { factorTamano, familiaDe, FORMAS, medidas, nombreCorto, nombreGrupo, tonoDe, type Forma } from "./familias";
 import { CuerposConForma, LADOS, Senales } from "./formas";
 import { construirMueble, medidaExtra, NEVERA, type Compartimento, type Mueble } from "./mueble";
@@ -92,6 +95,12 @@ export interface EstadisticasEscena {
   general: boolean;
   distancia: number;
   etiquetas: {
+    /** NEVERA-9: lo que se ve, con su estilo y su caja de texto en px CSS desde la esquina del lienzo. */
+    cajas: { nombre: string; estilo: string; x0: number; y0: number; x1: number; y1: number }[];
+    /** Ancho y alto del lienzo en px CSS (el contenedor del que nada puede salir). */
+    contenedor: [number, number];
+    /** El compartimento cuyo rótulo y nombres tocan (encuadrado, o el que se ve de cerca), o null. */
+    activo: string | null;
     visibles: string[];
     ocultas: string[];
     solapes: number;
@@ -192,9 +201,13 @@ const FOV = 40;
 const RAD = Math.PI / 180;
 const VENTANA_MS = 5000;
 const DPR_MAX = { normal: 2, ligero: 1.5 };
-/** Etiquetas fijas: hasta dos por compartimento de lejos y hasta tres por balda de cerca (o encuadrada). */
-const NOMBRES_POR_COMPARTIMENTO = 2;
+/** Etiquetas fijas del compartimento encuadrado: hasta tres por balda (una en las otras si hay una balda encuadrada). */
 const NOMBRES_POR_BALDA = 3;
+/** NEVERA-9: sin interacción, rótulos en pantalla como mucho (en el teléfono, menos: el lienzo mide ~360 px). */
+const TOPE_SIN_INTERACCION = { escritorio: 6, tactil: 3 };
+/** NEVERA-9: margen mínimo (px CSS) entre una etiqueta y el borde del lienzo; y ancho bajo el que no se acorta más. */
+const BORDE_PX = 4;
+const ANCHO_MIN_ACORTADO_PX = 56;
 /** «De cerca»: la cosa que manda en la balda mide al menos esto de alto en pantalla. */
 const CERCA_PX = 46;
 /** Por debajo de esto una cosa no lleva etiqueta fija (no se sabría a quién señala). */
@@ -203,6 +216,7 @@ const MIN_ETIQUETA_PX = 9;
 const OPACIDAD_ARO: Record<Semaforo, number> = { vencido: 1, urgente: 1, pronto: 0.85, bien: 0.5, "sin-fecha": 0.32 };
 const V1 = new THREE.Vector3();
 const V2 = new THREE.Vector3();
+const V3 = new THREE.Vector3();
 const M1 = new THREE.Matrix4();
 const M2 = new THREE.Matrix4();
 const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
@@ -293,7 +307,7 @@ export class MotorNevera {
       montones: [],
       general: true,
       distancia: 0,
-      etiquetas: { visibles: [], ocultas: [], solapes: 0, separacionMin: null, nombres: [], porBalda: {} },
+      etiquetas: { cajas: [], contenedor: [0, 0], activo: null, visibles: [], ocultas: [], solapes: 0, separacionMin: null, nombres: [], porBalda: {} },
       hover: null,
       seleccion: null,
       enPantalla: () => this.enPantalla(),
@@ -797,12 +811,36 @@ export class MotorNevera {
   }
 
   /**
-   * Qué etiquetas flotantes tocan ahora (NEVERA-7):
-   * - la de la cosa señalada con el ratón y la de la elegida (con su nombre entero y los días);
-   * - en escritorio, el nombre corto de lo más urgente: de lejos, la primera cosa de las dos primeras baldas de cada
-   *   compartimento; de cerca (o con la balda encuadrada), las tres primeras de cada balda. En un teléfono no hay
-   *   etiquetas fijas: solo la de la elegida;
-   * - la pastilla de cada montón («×4»), o «plegar» encima de la primera cosa de uno desplegado.
+   * NEVERA-9: el compartimento con prioridad (1): el encuadrado (tocar su hueco o `encuadrar`) y, si la cámara se
+   * movió a mano, el que se ve de cerca más cerca del centro del lienzo. En la vista general, ninguno.
+   */
+  private compartimentoActivo(): string | null {
+    if (this.enGeneral) return null;
+    const [c] = this.estadisticas.encuadre.split("#");
+    if (c && c !== "general") return c;
+    let mejor: string | null = null;
+    let mejorD = Infinity;
+    for (const comp of this.mueble.compartimentos) {
+      if (!this.cosas.some((k) => k.comp === comp.clave && k.fila === 0 && this.altoPx(k) >= CERCA_PX && this.enLienzo(k.pos))) continue;
+      const p = this.centroDe(comp.clave);
+      const d = p ? Math.hypot(p.x - this.ancho / 2, p.y - this.alto / 2) : Infinity;
+      if (d < mejorD) {
+        mejorD = d;
+        mejor = comp.clave;
+      }
+    }
+    return mejor;
+  }
+
+  /**
+   * Qué etiquetas flotantes tocan ahora. NEVERA-9: prioridad declarada, en este orden:
+   * - lo que se señala: la cosa bajo el ratón y la elegida (nombre entero y días), y «plegar» sobre un montón que
+   *   se desplegó al tocarlo;
+   * - (1) el compartimento activo (`compartimentoActivo`): su rótulo (en actualizarEtiquetas), los nombres de lo más
+   *   urgente de cada balda (tres en la encuadrada, una en las demás) y la pastilla «×N» de sus montones;
+   * - (2) lo que vence en ≤ 2 días (vencido o urgente) del resto: un nombre por compartimento por turnos, el más
+   *   urgente primero, hasta el tope (6; 3 en el teléfono). Sin interacción no hay más rótulos que estos;
+   * - (3) nada más: el resto vive en la lista y en el panel.
    */
   private quiero(): Map<string, Quiero> {
     const l = new Map<string, Quiero>();
@@ -812,50 +850,60 @@ export class MotorNevera {
     const hex = (c: THREE.Color) => `#${c.getHexString()}`;
     const balda = (c: Cosa) => `${c.comp}#${c.superficie}`;
     const sub = (c: Cosa) => (c.monton ? `lo primero: ${textoDias(c.dias)}` : textoDias(c.dias));
+    const nombre = (c: Cosa) => poner("n", { titulo: c.nombre, sub: textoDias(c.dias), estilo: "nombre", color: hex(c.colorAro), cosa: c, arriba: false, balda: balda(c), monton: null });
     const sel = this.seleccion !== null ? this.porId.get(this.seleccion) : undefined;
     for (const c of [this.hover, sel]) {
       if (!c) continue;
       const titulo = c.monton ? `${c.nombre} · toca para desplegar` : c.producto;
       poner("e", { titulo, sub: sub(c), estilo: "elemento", color: hex(c.colorAro), cosa: c, arriba: false, balda: balda(c), monton: null });
     }
-    if (!this.tactil) {
-      const porComp = new Map<string, Cosa[]>();
-      for (const c of this.cosas) (porComp.get(c.comp) ?? porComp.set(c.comp, []).get(c.comp)!).push(c);
-      const [compEnc, zonaEnc] = this.enGeneral ? ["", ""] : this.estadisticas.encuadre.split("#");
-      for (const [comp, lista] of porComp) {
-        const porBalda = new Map<number, Cosa[]>();
-        for (const c of lista) (porBalda.get(c.superficie) ?? porBalda.set(c.superficie, []).get(c.superficie)!).push(c);
-        const baldas = [...porBalda.keys()].sort((a, b) => a - b);
-        // De cerca: el compartimento encuadrado o, sin encuadre (la cámara se movió a mano), uno que se ve grande.
-        // Con una balda encuadrada, solo esa lleva tres; las otras del compartimento, la primera.
-        const enfocado = compEnc === comp;
-        const cerca = enfocado || ((!compEnc || compEnc === "general") && lista.some((c) => c.fila === 0 && this.altoPx(c) >= CERCA_PX));
-        const legible = (c: Cosa) => this.altoPx(c) >= MIN_ETIQUETA_PX && this.enLienzo(c.pos);
-        const elegidas: Cosa[] = [];
-        if (cerca) {
-          for (const b of baldas) {
-            const cuantas = enfocado && zonaEnc !== undefined && Number(zonaEnc) !== b ? 1 : NOMBRES_POR_BALDA;
-            elegidas.push(...porBalda.get(b)!.filter(legible).slice(0, cuantas));
-          }
-        } else {
-          for (const b of baldas.slice(0, NOMBRES_POR_COMPARTIMENTO)) {
-            const c = porBalda.get(b)![0];
-            if (legible(c)) elegidas.push(c);
-          }
-        }
-        for (const c of elegidas) {
-          if (c === this.hover || c === sel) continue;
-          poner("n", { titulo: c.nombre, sub: textoDias(c.dias), estilo: "nombre", color: hex(c.colorAro), cosa: c, arriba: false, balda: balda(c), monton: null });
+    const legible = (c: Cosa) => this.altoPx(c) >= MIN_ETIQUETA_PX && this.enLienzo(c.pos);
+    const libre = (c: Cosa) => c !== this.hover && c !== sel;
+    const activo = this.compartimentoActivo();
+    this.estadisticas.etiquetas.activo = activo;
+
+    // (1) El compartimento activo: nombres por balda y pastillas de sus montones.
+    if (activo) {
+      const zonaEnc = this.estadisticas.encuadre.startsWith(`${activo}#`) ? Number(this.estadisticas.encuadre.split("#")[1]) : null;
+      const porBalda = new Map<number, Cosa[]>();
+      for (const c of this.cosas) if (c.comp === activo) (porBalda.get(c.superficie) ?? porBalda.set(c.superficie, []).get(c.superficie)!).push(c);
+      for (const [b, lista] of [...porBalda].sort((x, y) => x[0] - y[0])) {
+        const cuantas = zonaEnc !== null && zonaEnc !== b ? 1 : NOMBRES_POR_BALDA;
+        for (const c of lista.filter(legible).slice(0, cuantas)) if (libre(c)) nombre(c);
+      }
+      for (const c of this.cosas) {
+        if (c.comp === activo && c.monton && legible(c)) {
+          poner("m", { titulo: `×${c.ids.length}`, sub: null, estilo: "monton", color: hex(c.colorAro), cosa: c, arriba: true, balda: balda(c), monton: c.monton });
         }
       }
     }
+
+    // «plegar» sobre el primer sitio de cada montón desplegado (se desplegó tocándolo: es interacción).
     const plegar = new Set<string>();
     for (const c of this.cosas) {
-      if (c.monton) {
-        poner("m", { titulo: `×${c.ids.length}`, sub: null, estilo: "monton", color: hex(c.colorAro), cosa: c, arriba: true, balda: balda(c), monton: c.monton });
-      } else if (c.desplegadaDe && !plegar.has(c.desplegadaDe)) {
+      if (c.desplegadaDe && !plegar.has(c.desplegadaDe)) {
         plegar.add(c.desplegadaDe);
         poner("m", { titulo: "plegar", sub: null, estilo: "monton", color: hex(c.colorAro), cosa: c, arriba: true, balda: balda(c), monton: c.desplegadaDe });
+      }
+    }
+
+    // (2) Lo que vence en ≤ 2 días fuera del activo: por turnos entre compartimentos, hasta el tope.
+    const tope = this.tactil ? TOPE_SIN_INTERACCION.tactil : TOPE_SIN_INTERACCION.escritorio;
+    const urgentes = new Map<string, Cosa[]>();
+    for (const c of this.cosas) {
+      if (c.comp === activo || (c.sem !== "vencido" && c.sem !== "urgente") || !libre(c) || !legible(c)) continue;
+      (urgentes.get(c.comp) ?? urgentes.set(c.comp, []).get(c.comp)!).push(c);
+    }
+    const dias = (c: Cosa) => c.dias ?? Infinity;
+    const colas = [...urgentes.values()].map((x) => [...x].sort((a, b) => dias(a) - dias(b))).sort((a, b) => dias(a[0]) - dias(b[0]));
+    let puestos = 0;
+    for (let ronda = 0; puestos < tope && colas.some((q) => q.length > ronda); ronda++) {
+      for (const q of colas) {
+        if (puestos >= tope) break;
+        if (q[ronda]) {
+          nombre(q[ronda]);
+          puestos++;
+        }
       }
     }
     return l;
@@ -893,32 +941,61 @@ export class MotorNevera {
    * pastillas, los rótulos y al final los nombres fijos; a igual rango lo más cercano) y, si una pisa a otra ya puesta
    * o queda a menos de 14 px, se aparta arriba o abajo de 2 en 2 px hasta 72; si no cabe, se oculta. Nunca dos
    * comparten un píxel.
+   * NEVERA-9: (a) solo se rotula el compartimento activo, en la franja bajo su cuerpo (si su borde inferior cae fuera
+   * del lienzo, la franja se apoya en el borde de abajo); (b) lo que no cabe a lo ancho se acorta con «…» alrededor de
+   * su punto o, si quedaría demasiado corto, se corre de lado; (c) los bordes del lienzo entran al resolvedor como
+   * cuatro paredes (cajas fuera del lienzo), así nada se aparta hacia fuera; (d) el rótulo del compartimento trata
+   * además las cosas en pantalla como obstáculos: si no puede quedar sin pisar ninguna, no se pinta.
    */
   private actualizarEtiquetas(dt: number) {
     this.sincronizarFlotantes();
     const arriba = V1.setFromMatrixColumn(this.camara.matrixWorld, 1).clone();
+    const derecha = V2.setFromMatrixColumn(this.camara.matrixWorld, 0).clone();
     const tan = Math.tan((FOV * RAD) / 2);
+    const W = this.ancho;
+    const H = this.alto;
+    const m = MARGEN_ETIQUETA_PX;
     type Candidata = { e: Etiqueta; caja: Caja; prof: number; nombre: string; f: Flotante | null };
     const candidatas: Candidata[] = [];
     const base = new Map<Etiqueta, { pos: THREE.Vector3; mundoPorPx: number }>();
-    const considerar = (e: Etiqueta, p: THREE.Vector3, nombre: string, f: Flotante | null, haciaArriba: boolean) => {
+    const activo = this.estadisticas.etiquetas.activo;
+    const considerar = (e: Etiqueta, p: THREE.Vector3, nombre: string, f: Flotante | null, haciaArriba: boolean, quiere: boolean) => {
       const pos = p.clone();
-      const prof = -V2.copy(pos).applyMatrix4(this.camara.matrixWorldInverse).z;
-      const mundoPorPx = (2 * Math.max(prof, 0.01) * tan) / this.alto;
+      const prof = -V3.copy(pos).applyMatrix4(this.camara.matrixWorldInverse).z;
+      const mundoPorPx = (2 * Math.max(prof, 0.01) * tan) / H;
       base.set(e, { pos, mundoPorPx });
-      const v = V2.copy(pos).project(this.camara);
-      if (prof <= 0 || v.z > 1 || (f && !f.quiero)) {
+      const v = V3.copy(pos).project(this.camara);
+      if (!quiere || prof <= 0 || v.z > 1) {
         e.objetivo = 0;
         if (f) f.caja = null;
         return;
       }
-      const sx = ((v.x + 1) / 2) * this.ancho;
-      const sy = ((1 - v.y) / 2) * this.alto;
-      const m = MARGEN_ETIQUETA_PX;
+      const sx = ((v.x + 1) / 2) * W;
+      let sy = ((1 - v.y) / 2) * H;
+      // (b) A lo ancho: cabe centrada en su punto, o se acorta alrededor de él, o (si quedaría muy corta) se corre.
+      const espacio = 2 * Math.min(sx - BORDE_PX, W - BORDE_PX - sx);
+      const natural = e.anchoNatural;
+      let dx = 0;
+      if (natural <= espacio) e.recortar(null);
+      else if (espacio >= Math.min(natural, ANCHO_MIN_ACORTADO_PX)) e.recortar(espacio);
+      else {
+        e.recortar(W - 2 * BORDE_PX);
+        const w = e.anchoCss - 2 * m;
+        dx = clamp(sx - w / 2, BORDE_PX, W - BORDE_PX - w) - (sx - w / 2);
+      }
+      e.desplazamientoX = dx;
+      // (a) La franja del compartimento no baja del borde inferior del lienzo.
+      if (e.estilo === "compartimento") sy = Math.min(sy, H - BORDE_PX - (e.altoCss - 2 * m) - m);
       const y0 = haciaArriba ? sy - e.altoCss + m : sy + m;
-      candidatas.push({ e, prof, nombre, f, caja: { x0: sx - e.anchoCss / 2 + m, x1: sx + e.anchoCss / 2 - m, y0, y1: y0 + e.altoCss - 2 * m } });
+      const x0 = sx + dx - e.anchoCss / 2 + m;
+      candidatas.push({ e, prof, nombre, f, caja: { x0, x1: x0 + e.anchoCss - 2 * m, y0, y1: y0 + e.altoCss - 2 * m } });
     };
-    for (const r of this.rotulos) considerar(r.etiqueta, r.comp.ancla.clone().add(this.raiz.position), r.comp.nombre, null, false);
+    for (const r of this.rotulos) {
+      // La franja cuelga del borde inferior (ancla) un poco más abajo, para no tocar el canto del suelo del mueble.
+      const p = r.comp.ancla.clone().add(this.raiz.position);
+      p.addScaledVector(arriba, -(4 * this.camara.position.distanceTo(p)) / this.pxPorUnidad);
+      considerar(r.etiqueta, p, r.comp.nombre, null, false, r.comp.clave === activo);
+    }
     for (const f of this.flotantes.values()) {
       const c = this.porClave.get(f.clave);
       if (!c) {
@@ -936,17 +1013,38 @@ export class MotorNevera {
         ? c.pos.clone().addScaledVector(arriba, c.alto / 2 + (4 * d) / this.pxPorUnidad)
         : c.base.clone().addScaledVector(arriba, -(3 * d) / this.pxPorUnidad);
       const nombre = f.e.estilo === "monton" ? `${c.monton ? c.nombre : nombreGrupo(c.producto)} (pastilla «${f.e.titulo}»)` : f.e.estilo === "elemento" && !c.monton ? c.producto : c.nombre;
-      considerar(f.e, p, nombre, f, f.arriba);
+      considerar(f.e, p, nombre, f, f.arriba, f.quiero);
     }
     candidatas.sort((a, b) => RANGO_ETIQUETA[b.e.estilo] - RANGO_ETIQUETA[a.e.estilo] || a.prof - b.prof);
+    // (c) Las paredes: el resolvedor exige 14 px de hueco, así que cada pared acaba 14 − BORDE px fuera del lienzo.
+    const S = SEPARACION_ETIQUETAS_PX;
+    const G = 1e5;
+    const paredes: Caja[] = [
+      { x0: -G, x1: G, y0: -G, y1: BORDE_PX - S },
+      { x0: -G, x1: G, y0: H - BORDE_PX + S, y1: G },
+      { x0: -G, x1: BORDE_PX - S, y0: -G, y1: G },
+      { x0: W - BORDE_PX + S, x1: G, y0: -G, y1: G },
+    ];
+    // (d) Las cosas en pantalla, para el rótulo: su caja (radio en px) encogida para que baste un hueco de 4 px.
+    const cosasEnPantalla: Caja[] = [];
+    if (candidatas.some((k) => k.e.estilo === "compartimento")) {
+      const encoge = S - 4;
+      for (const c of this.enPantalla()) {
+        const r = c.r - encoge;
+        cosasEnPantalla.push(r > 0 ? { x0: c.x - r, x1: c.x + r, y0: c.y - r, y1: c.y + r } : { x0: c.x, x1: c.x, y0: c.y, y1: c.y });
+      }
+    }
     const puestas: Caja[] = [];
     const info = this.estadisticas.etiquetas;
     info.visibles = [];
     info.ocultas = [];
     info.nombres = [];
     info.porBalda = {};
+    info.cajas = [];
+    info.contenedor = [W, H];
     for (const k of candidatas) {
-      const d = colocarEtiqueta(k.caja, puestas, k.e.desplazamientoObjetivo);
+      const obstaculos = k.e.estilo === "compartimento" ? [...puestas, ...paredes, ...cosasEnPantalla] : [...puestas, ...paredes];
+      const d = colocarEtiqueta(k.caja, obstaculos, k.e.desplazamientoObjetivo);
       if (d === null) {
         k.e.objetivo = 0;
         if (k.f) k.f.caja = null;
@@ -960,10 +1058,15 @@ export class MotorNevera {
       if (k.f) k.f.caja = caja;
     }
     const vistas: Caja[] = [];
+    const r1 = (x: number) => Math.round(x * 10) / 10;
     for (const k of candidatas) {
       if (k.e.objetivo <= 0.01) continue;
-      vistas.push(bajar(k.caja, k.e.desplazamiento));
+      const caja = bajar(k.caja, k.e.desplazamiento);
+      vistas.push(caja);
       info.visibles.push(k.nombre);
+      // La placa de la franja y de la pastilla sobresale del texto (margen − 2 px): la sonda da lo que se pinta.
+      const placa = k.e.estilo === "compartimento" || k.e.estilo === "monton" ? m - 2 : 0;
+      info.cajas.push({ nombre: k.nombre, estilo: k.e.estilo, x0: r1(caja.x0 - placa), y0: r1(caja.y0 - placa), x1: r1(caja.x1 + placa), y1: r1(caja.y1 + placa) });
       if (k.e.estilo === "nombre" && k.f) {
         info.nombres.push(k.nombre);
         info.porBalda[k.f.balda] = (info.porBalda[k.f.balda] ?? 0) + 1;
@@ -982,7 +1085,7 @@ export class MotorNevera {
     info.separacionMin = Number.isFinite(separacionMin) ? Math.round(separacionMin * 10) / 10 : null;
     for (const [e, b] of base) {
       e.avanzar(dt, this.reducido);
-      e.sprite.position.copy(b.pos).addScaledVector(arriba, -e.desplazamiento * b.mundoPorPx);
+      e.sprite.position.copy(b.pos).addScaledVector(arriba, -e.desplazamiento * b.mundoPorPx).addScaledVector(derecha, e.desplazamientoX * b.mundoPorPx);
     }
   }
 

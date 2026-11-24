@@ -7,6 +7,8 @@ import { piel } from "./piel";
 
 // NEVERA-6: dos estilos. El rótulo de un compartimento («balda 1», «puerta») y la etiqueta de un elemento al pasar
 // el ratón (nombre y días). Si se pisan, cede el compartimento: lo que el usuario está señalando manda.
+// NEVERA-9: el rótulo de compartimento va en una franja (placa con fondo de panel) y cualquier etiqueta que no cabe
+// en el lienzo se acorta con «…» (`recortar`) o se corre de lado (`desplazamientoX`): nada sale del contenedor.
 // NEVERA-7: dos más. «nombre», la etiqueta fija (nombre corto y días) de lo más urgente de cada balda, que cede ante
 // todo lo demás; y «monton», la pastilla con el número de un montón, que solo cede ante lo señalado.
 export type EstiloEtiqueta = "compartimento" | "elemento" | "nombre" | "monton";
@@ -58,6 +60,14 @@ export class Etiqueta {
   /** Desplazamiento vertical en px CSS (positivo = hacia abajo) para no pisar otra etiqueta: actual y objetivo. */
   desplazamiento = 0;
   desplazamientoObjetivo = 0;
+  /** NEVERA-9: corrimiento horizontal en px CSS (positivo = a la derecha) para no salirse del lienzo; sin animar. */
+  desplazamientoX = 0;
+  /** NEVERA-9: ancho del texto sin acortar (px CSS, sin el margen transparente). */
+  anchoNatural = 0;
+  /** NEVERA-9: ancho máximo del texto (px CSS) o null; lo que no cabe se acorta con «…». */
+  private maxTexto: number | null = null;
+  private dprActual = 1;
+  private k = 0;
 
   constructor(
     readonly titulo: string, // NEVERA-7: público, para que la sonda diga qué pone una pastilla
@@ -85,23 +95,46 @@ export class Etiqueta {
 
   /** Redibuja el texto a la resolución del dispositivo (se llama de nuevo cuando cargan las fuentes). */
   dibujar(dpr: number) {
+    this.dprActual = dpr;
     const t = TAMANOS[this.estilo];
     const s = Math.min(4, Math.max(2, dpr * 2));
     const ctx = this.lienzo.getContext("2d")!;
     const fuenteTitulo = `500 ${t.titulo * s}px "Space Grotesk", Inter, system-ui, sans-serif`;
     const fuenteSub = `400 ${t.sub * s}px "JetBrains Mono", ui-monospace, monospace`;
     const espaciado = `${t.espaciado * t.titulo * s}px`;
-    const lineas = partirLineas(this.titulo, t.lineaMax);
+    let lineas = partirLineas(this.titulo, t.lineaMax);
+    let sub = this.sub;
     ctx.font = fuenteTitulo;
     ctx.letterSpacing = espaciado;
-    const wT = Math.max(...lineas.map((l) => ctx.measureText(l).width));
+    let wT = Math.max(...lineas.map((l) => ctx.measureText(l).width));
     ctx.font = fuenteSub;
     ctx.letterSpacing = "0px";
-    const wS = this.sub ? ctx.measureText(this.sub).width : 0;
+    let wS = sub ? ctx.measureText(sub).width : 0;
+    this.anchoNatural = Math.max(wT, wS) / s;
+    // NEVERA-9: con tope de ancho, cada línea que no cabe pierde letras por el final y lleva «…».
+    if (this.maxTexto !== null && this.anchoNatural > this.maxTexto) {
+      const limite = this.maxTexto * s;
+      const acortar = (texto: string) => {
+        if (ctx.measureText(texto).width <= limite) return texto;
+        let n = texto.length;
+        while (n > 1 && ctx.measureText(texto.slice(0, n).trimEnd() + "…").width > limite) n--;
+        return texto.slice(0, n).trimEnd() + "…";
+      };
+      ctx.font = fuenteTitulo;
+      ctx.letterSpacing = espaciado;
+      lineas = lineas.map(acortar);
+      wT = Math.max(...lineas.map((l) => ctx.measureText(l).width));
+      ctx.font = fuenteSub;
+      ctx.letterSpacing = "0px";
+      if (sub) {
+        sub = acortar(sub);
+        wS = ctx.measureText(sub).width;
+      }
+    }
     const pad = MARGEN_ETIQUETA_PX * s;
     const altoLinea = t.titulo * 1.25 * s;
     const altoTitulo = altoLinea * lineas.length;
-    const altoSub = this.sub ? t.sub * 1.3 * s : 0;
+    const altoSub = sub ? t.sub * 1.3 * s : 0;
     const w = Math.ceil(Math.max(wT, wS) + pad * 2);
     const h = Math.ceil(altoTitulo + altoSub + pad * 2);
     this.lienzo.width = w;
@@ -112,6 +145,17 @@ export class Etiqueta {
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     const p = piel(); // NEVERA-6: la sombra es el --void-900 de la piel
+    if (this.estilo === "compartimento") {
+      // NEVERA-9: la franja del compartimento, una placa en el panel con el borde de siempre.
+      const m = 2 * s;
+      ctx.fillStyle = p.panel;
+      ctx.strokeStyle = p.borde;
+      ctx.lineWidth = 1 * s;
+      ctx.beginPath();
+      ctx.roundRect(m, m, w - 2 * m, h - 2 * m, 4 * s);
+      ctx.fill();
+      ctx.stroke();
+    }
     if (this.estilo === "monton") {
       // NEVERA-7: la pastilla del montón, en el panel elevado con el borde fuerte, para que el número se lea encima de
       // cualquier cosa.
@@ -138,7 +182,7 @@ export class Etiqueta {
     // urgente que lleva); el elemento, en tinta, y sus días del color de su urgencia.
     const colorTitulo = this.estilo === "compartimento" ? p.muted : p.ink; // NEVERA-7: «nombre» y «monton», en tinta
     lineas.forEach((l, i) => pintar(l, fuenteTitulo, colorTitulo, pad + altoLinea * i, espaciado));
-    if (this.sub) pintar(this.sub, fuenteSub, this.color, pad + altoTitulo, "0px");
+    if (sub) pintar(sub, fuenteSub, this.color, pad + altoTitulo, "0px");
     this.textura.needsUpdate = true;
   }
 
@@ -150,8 +194,18 @@ export class Etiqueta {
     return this._alto;
   }
 
+  /** NEVERA-9: fija el ancho máximo del texto (px CSS; null = sin tope) y redibuja solo si cambia (en pasos de 4 px). */
+  recortar(max: number | null) {
+    const q = max === null || max >= this.anchoNatural ? null : Math.max(24, Math.floor(max / 4) * 4);
+    if (q === this.maxTexto) return;
+    this.maxTexto = q;
+    this.dibujar(this.dprActual);
+    if (this.k) this.escalar(this.k);
+  }
+
   /** k = unidades de sprite por píxel CSS (depende del alto del lienzo y del fov). */
   escalar(k: number) {
+    this.k = k;
     this.sprite.scale.set(this._ancho * k, this._alto * k, 1);
   }
 
