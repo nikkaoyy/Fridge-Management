@@ -239,9 +239,10 @@ def test_la_piel_es_la_de_aria_copiada_tal_cual():
     assert aria["--font-body"].startswith('"Inter"') and aria["--font-display"].startswith('"Space Grotesk"')
     assert aria["--font-mono"].startswith('"JetBrains Mono"')
     if os.path.isfile(TOKENS_ARIA):  # en la máquina: copia literal, byte a byte
-        # NEVERA-9: lo commiteado en PYTHAGORAS (HEAD), no su árbol de trabajo: el 2026-11-24 otra sesión tenía a medio
-        # hacer un `--naranja` propio de PYTHAGORAS («no viene del HUD») sin commit, y la prueba fallaba por eso.
-        commiteado = subprocess.run(["git", "-C", os.path.dirname(TOKENS_ARIA), "show", "HEAD:./tokens.css"],
+        # NEVERA-9: la copia es de los tokens de ARIA tal como estaban en PYTHAGORAS en d062795 (2026-11-09), los que
+        # cita el pedido. El 2026-11-24 PYTHAGORAS 14 (b9113fa) añadió su `--naranja` («no viene del HUD», solo de su
+        # escena): no es de ARIA ni lo usa la nevera, así que no se copia y la comparación queda fijada en ese commit.
+        commiteado = subprocess.run(["git", "-C", os.path.dirname(TOKENS_ARIA), "show", "d062795:./tokens.css"],
                                     capture_output=True, text=True)
         original = commiteado.stdout if commiteado.returncode == 0 else open(TOKENS_ARIA, encoding="utf-8").read()
         assert _bloque(indice, "piel-aria") + "\n" == original

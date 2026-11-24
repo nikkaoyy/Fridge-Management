@@ -102,8 +102,10 @@ def test_los_tonos_son_tokens_de_la_piel_de_aria():
         assert t["token"] in tokens, cat
         assert t.get("hacia", "void") in tokens, cat
         assert 0 <= t.get("t", 0) <= 1, cat
-        assert t["token"] != "danger", f"{cat}: --danger es solo para la urgencia"
-    assert set(FAMILIAS["tonosSinCategoria"]) <= tokens
+        # NEVERA-9: jerarquía. La urgencia (--done, --warn, --danger) es del aro y del pulso, nunca del cuerpo.
+        assert t["token"] not in {"done", "warn", "danger"}, f"{cat}: {t['token']} es de la urgencia"
+        assert t.get("hacia", "void") not in {"done", "warn", "danger"}, f"{cat}: mezcla con un tono de urgencia"
+    assert set(FAMILIAS["tonosSinCategoria"]) <= tokens - {"done", "warn", "danger"}
     texto = json.dumps(FAMILIAS)
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(", texto)
 
@@ -148,6 +150,8 @@ def test_una_instanced_mesh_por_forma_y_la_urgencia_en_un_aro():
     poner = re.search(r"this\.cuerpos\.poner\((.*)\);", motor).group(1)
     assert "tonoCategoria" in poner and "colores" not in poner
     assert re.search(r"this\.senales\.aro\([^;]*cosa\.colorAro", motor)
+    # NEVERA-9: el color de urgencia no sale a los rótulos (solo aro y pulso)
+    assert "hex(c.colorAro)" not in motor and "colores[semaforo" not in motor
     # el pulso, solo para lo que vence en ≤ 2 días (vencido o urgente del semáforo de la lista)
     assert re.search(r'if \(sem === "vencido" \|\| sem === "urgente"\) this\.senales\.latir\(', motor)
     assert "uLatido" in formas and "reducido ? 0 : 1" in formas  # sin pulso con movimiento reducido

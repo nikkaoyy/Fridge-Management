@@ -178,9 +178,9 @@ export class Etiqueta {
       ctx.fillText(texto, w / 2, y);
       ctx.fillText(texto, w / 2, y);
     };
-    // NEVERA-6: el rótulo de un compartimento va en gris tenue y su recuento del color que se le pase (el del más
-    // urgente que lleva); el elemento, en tinta, y sus días del color de su urgencia.
-    const colorTitulo = this.estilo === "compartimento" ? p.muted : p.ink; // NEVERA-7: «nombre» y «monton», en tinta
+    // El título, en tinta; la línea de abajo, del color que se le pase. NEVERA-9: el motor pasa siempre la tinta tenue
+    // (la urgencia queda en el aro y el pulso), así que el título manda y el recuento o los días acompañan.
+    const colorTitulo = p.ink;
     lineas.forEach((l, i) => pintar(l, fuenteTitulo, colorTitulo, pad + altoLinea * i, espaciado));
     if (sub) pintar(sub, fuenteSub, this.color, pad + altoTitulo, "0px");
     this.textura.needsUpdate = true;

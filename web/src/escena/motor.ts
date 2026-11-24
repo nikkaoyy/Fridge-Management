@@ -690,7 +690,8 @@ export class MotorNevera {
       null,
     );
     const sub = lista.length ? `${lista.length} · ${masUrgente === null ? "sin fecha" : `lo primero: ${textoDias(masUrgente)}`}` : "vacío";
-    const color = lista.length ? this.colores[semaforo(masUrgente)] : this.colores["sin-fecha"];
+    // NEVERA-9: el recuento va en tinta tenue; la urgencia de lo que lleva se ve en los aros, no en el rótulo.
+    const color = this.colores["sin-fecha"];
     const firma = `${comp.nombre}|${sub}|${color.getHexString()}`;
     const previo = this.rotulos.find((r) => r.comp.clave === comp.clave);
     if (previo && previo.firma === firma) {
@@ -847,15 +848,16 @@ export class MotorNevera {
     // La clave lleva todo lo que se pinta (texto, días, color): si algo cambia, es otra etiqueta y la vieja se apaga.
     // Así «×3» y «plegar» del mismo montón no comparten sprite, ni se queda un día viejo tras recargar la lista.
     const poner = (tipo: string, q: Quiero) => l.set(`${tipo}:${q.cosa.clave}|${q.titulo}|${q.sub ?? ""}|${q.color}`, q);
-    const hex = (c: THREE.Color) => `#${c.getHexString()}`;
+    // NEVERA-9: la urgencia vive solo en el aro y el pulso; los días del rótulo, en tinta tenue (el texto ya lo dice).
+    const texto = piel().muted;
     const balda = (c: Cosa) => `${c.comp}#${c.superficie}`;
     const sub = (c: Cosa) => (c.monton ? `lo primero: ${textoDias(c.dias)}` : textoDias(c.dias));
-    const nombre = (c: Cosa) => poner("n", { titulo: c.nombre, sub: textoDias(c.dias), estilo: "nombre", color: hex(c.colorAro), cosa: c, arriba: false, balda: balda(c), monton: null });
+    const nombre = (c: Cosa) => poner("n", { titulo: c.nombre, sub: textoDias(c.dias), estilo: "nombre", color: texto, cosa: c, arriba: false, balda: balda(c), monton: null });
     const sel = this.seleccion !== null ? this.porId.get(this.seleccion) : undefined;
     for (const c of [this.hover, sel]) {
       if (!c) continue;
       const titulo = c.monton ? `${c.nombre} · toca para desplegar` : c.producto;
-      poner("e", { titulo, sub: sub(c), estilo: "elemento", color: hex(c.colorAro), cosa: c, arriba: false, balda: balda(c), monton: null });
+      poner("e", { titulo, sub: sub(c), estilo: "elemento", color: texto, cosa: c, arriba: false, balda: balda(c), monton: null });
     }
     const legible = (c: Cosa) => this.altoPx(c) >= MIN_ETIQUETA_PX && this.enLienzo(c.pos);
     const libre = (c: Cosa) => c !== this.hover && c !== sel;
@@ -873,7 +875,7 @@ export class MotorNevera {
       }
       for (const c of this.cosas) {
         if (c.comp === activo && c.monton && legible(c)) {
-          poner("m", { titulo: `×${c.ids.length}`, sub: null, estilo: "monton", color: hex(c.colorAro), cosa: c, arriba: true, balda: balda(c), monton: c.monton });
+          poner("m", { titulo: `×${c.ids.length}`, sub: null, estilo: "monton", color: texto, cosa: c, arriba: true, balda: balda(c), monton: c.monton });
         }
       }
     }
@@ -883,7 +885,7 @@ export class MotorNevera {
     for (const c of this.cosas) {
       if (c.desplegadaDe && !plegar.has(c.desplegadaDe)) {
         plegar.add(c.desplegadaDe);
-        poner("m", { titulo: "plegar", sub: null, estilo: "monton", color: hex(c.colorAro), cosa: c, arriba: true, balda: balda(c), monton: c.desplegadaDe });
+        poner("m", { titulo: "plegar", sub: null, estilo: "monton", color: texto, cosa: c, arriba: true, balda: balda(c), monton: c.desplegadaDe });
       }
     }
 
