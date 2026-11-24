@@ -4,3 +4,9 @@ __pycache__/
 data/
 web/node_modules/
 web/dist/
+
+# Documentos internos y capturas con datos de casa
+INFORME-*.md
+PEDIDO-*.md
+docs/*.png
+docs/ESTADO.md
